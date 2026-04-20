@@ -1,0 +1,10 @@
+services:
+  scraper:
+    build: .
+    container_name: deep-dive-scraper
+    restart: unless-stopped
+    # Bind to 127.0.0.1 only — reachable from WSL/Windows localhost, not from the LAN.
+    ports:
+      - "127.0.0.1:8765:8765"
+    # Chromium hates the default 64MB /dev/shm in Docker; bump it.
+    shm_size: "1gb"

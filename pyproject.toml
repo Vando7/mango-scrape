@@ -1,0 +1,13 @@
+[project]
+name = "deep-dive-scraper"
+version = "0.1.0"
+description = "Scraper service (FastAPI + patchright + trafilatura). Runs in Docker; MCP shim in shim/ talks to it."
+requires-python = ">=3.11"
+dependencies = [
+    "patchright>=1.48",
+    "trafilatura>=2.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.0",
+    "chroma-mcp>=0.2.6",
+]
