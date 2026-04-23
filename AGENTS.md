@@ -26,8 +26,8 @@ The container owns all heavy deps (patched Chromium, extraction). The shim is in
 
 | Path | Role |
 |---|---|
-| `scraper.py` | Scraping logic. `launch_browser`, `_scroll_page`, `_extract_reddit_comments`, `scrape_one`, `scrape_many`. Reddit-specific: scroll + network idle wait + include_comments=True + www→old.reddit→m.reddit fallback chain. |
-| `server.py` | FastAPI wrapper. Lifespan owns a shared browser. `POST /scrape`, `POST /screenshot`, `GET /health`. |
+| `scraper.py` | Scraping logic. `_compact` (collapses whitespace/newlines so JSON-escaping doesn't eat tokens), `launch_browser`, `_scroll_page`, `_extract_reddit_comments`, `scrape_one`, `scrape_many`. Reddit-specific: scroll + network idle wait + include_comments=True + www→old.reddit→m.reddit fallback chain. |
+| `server.py` | FastAPI wrapper. Lifespan owns a shared browser. `POST /scrape`, `POST /screenshot`, `GET /health`. Returns compact JSON (no pretty-print). |
 | `Dockerfile` | Based on `mcr.microsoft.com/playwright/python` so Chromium's system libs are pre-installed. |
 | `docker-compose.yml` | Binds `127.0.0.1:8765`, sets `shm_size: 1gb`. |
 | `shim/mcp_shim.py` | stdio MCP server. Forwards `deep_dive` and `deep_dive_screenshot` to the container. |
@@ -57,6 +57,8 @@ uv sync
 uv run patchright install chromium
 uv run uvicorn server:app --reload --port 8765
 ```
+
+_compact() strips whitespace so JSON-escaping doesn't waste tokens. All string fields that reach the model (`markdown_content`, `description`, `title`, YouTube transcript/comments) are passed through `_compact()` which collapses runs of 2+ newlines to single newlines, trims leading/trailing whitespace, and flattens horizontal whitespace. The result is compact JSON with no escaped `\n` sequences eating tokens.
 
 ## Conventions and gotchas
 

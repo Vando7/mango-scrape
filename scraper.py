@@ -99,6 +99,15 @@ async def _extract_reddit_comments(page) -> str:
         return ""
 
 
+def _compact(text: str) -> str:
+    """Collapse whitespace/newlines so JSON-escaping doesn't eat tokens."""
+    if not text:
+        return text
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    return text
+
+
 def _extract_video_id(url: str) -> str | None:
     """Extract YouTube video ID from various URL formats."""
     patterns = [
@@ -137,7 +146,7 @@ async def _fetch_transcript(video_id: str, timeout_s: int) -> dict:
         return {
             "status": "ok",
             "video_id": video_id,
-            "transcript": full_text,
+            "transcript": _compact(full_text),
             "word_count": len(full_text.split()) if full_text else 0,
             "language": transcript_list.language if hasattr(transcript_list, 'language') else "unknown",
         }
@@ -259,15 +268,20 @@ async def _scrape_youtube_comments(browser: Browser, url: str, timeout_s: int) -
         except Exception:
             pass
 
+        # Compact whitespace so JSON escaping doesn't waste tokens
+        for k in ("title", "description"):
+            if isinstance(video_meta.get(k), str):
+                video_meta[k] = _compact(video_meta[k])
+
         return {
             "status": "ok",
             "url": url,
             "comment_count": len(unique_comments),
-            "comments": unique_comments[:200],  # cap at 200 comments
+            "comments": [_compact(c) for c in unique_comments[:200]],
             "video_title": video_meta.get("title", ""),
             "channel": video_meta.get("channel", ""),
             "upload_date": video_meta.get("upload_date", ""),
-            "description": video_meta.get("description", ""),
+            "description": _compact(video_meta.get("description", "")),
         }
     except Exception as e:
         log.warning("youtube comment scrape failed: %s", e)
@@ -315,11 +329,11 @@ async def scrape_youtube(browser: Browser, url: str, timeout_s: int) -> dict:
         "url": url,
         "status": "ok",
         "video_id": video_id,
-        "title": comment_result.get("video_title", f"YouTube: {video_id}"),
+        "title": _compact(comment_result.get("video_title", f"YouTube: {video_id}")),
         "channel": comment_result.get("channel", ""),
         "upload_date": comment_result.get("upload_date", ""),
-        "description": comment_result.get("description", ""),
-        "markdown_content": full_content,
+        "description": _compact(comment_result.get("description", "")),
+        "markdown_content": _compact(full_content),
         "word_count": len(full_content.split()) if full_content else 0,
         "transcript_status": transcript_result.get("status", "error"),
         "comment_count": comment_result.get("comment_count", 0) if comment_result.get("status") == "ok" else 0,
@@ -453,7 +467,7 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
         return {"url": url, "status": "error", "error": f"navigation failed: {last_error}"}
 
     try:
-        content = (
+        raw_content = (
             trafilatura.extract(
                 html,
                 output_format="markdown",
@@ -463,6 +477,7 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
             )
             or ""
         )
+        content = _compact(raw_content)
         meta = trafilatura.extract_metadata(html)
     except Exception as e:
         log.warning("extraction failed: %s -> %s", url, e)
@@ -474,7 +489,8 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
 
     # For Reddit URLs, append DOM-extracted comments that trafilatura missed
     if "reddit.com" in url and reddit_comments_html:
-        content = f"{content}\n\n--- Reddit Comments (DOM Extracted) ---\n\n{reddit_comments_html}"
+        content = f"{content}\n\n--- Reddit Comments (DOM Extracted) ---\n\n{_compact(reddit_comments_html)}"
+    content = _compact(content)
 
     return {
         "url": url,
@@ -482,7 +498,7 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
         "title": getattr(meta, "title", None),
         "author": getattr(meta, "author", None),
         "date": getattr(meta, "date", None),
-        "description": getattr(meta, "description", None),
+        "description": _compact(getattr(meta, "description", None) or ""),
         "markdown_content": content,
         "word_count": len(content.split()) if content else 0,
     }
