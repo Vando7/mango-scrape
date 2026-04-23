@@ -76,7 +76,7 @@ uv run uvicorn server:app --reload --port 8765
 
 **LM Studio mcp.json.** Located at `~/.lmstudio/mcp.json` (or `%USERPROFILE%\.lmstudio\mcp.json` on Windows). Follows Cursor's notation: `{"mcpServers": {...}}` with `command`/`args`/`env` for stdio, `{"url": ...}` for remote. LM Studio spawns processes without inheriting shell PATH — `command` must be an absolute path. Per-server stderr is visible in the Program tab.
 
-**Screenshots return MCP ImageContent.** `deep_dive_screenshot` in the shim decodes base64 from the container into raw bytes, wraps each in `mcp.server.fastmcp.utilities.types.Image`. FastMCP's `_convert_to_content` turns these into proper `ImageContent` blocks with `type: "image"`, base64 `data`, and `mimeType: "image/png"`. The model sees actual images, not opaque strings.
+**Screenshots return MCP ImageContent.** `deep_dive_screenshot` in the shim forwards screenshot b64 from the container into `mcp.types.ImageContent(type="image", data=<b64>, mimeType="image/png")` blocks. These serialize directly as image content blocks with base64 data and mime type — the model sees actual images, not opaque strings.
 
 ## External references
 

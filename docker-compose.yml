@@ -8,3 +8,8 @@ services:
       - "127.0.0.1:8765:8765"
     # Chromium hates the default 64MB /dev/shm in Docker; bump it.
     shm_size: "1gb"
+    # Persistent workspace for downloads, cloned repos, and file operations
+    volumes:
+      - ./workspace:/workspace
+    environment:
+      - DEEP_DIVE_WORKSPACE=/workspace

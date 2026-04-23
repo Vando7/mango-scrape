@@ -6,13 +6,22 @@ Runs inside the Docker container. The MCP shim on Windows talks to it.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from scraper import launch_browser, scrape_many, screenshot_many
+from scraper import (
+    cat_file,
+    clone_repo,
+    download_file,
+    launch_browser,
+    list_files,
+    scrape_many,
+    screenshot_many,
+)
 
 logging.basicConfig(
     stream=sys.stderr,
@@ -59,3 +68,46 @@ async def health() -> dict:
 async def screenshot(req: ScrapeRequest) -> list[dict]:
     log.info("screenshot %d url(s)", len(req.urls))
     return await screenshot_many(app.state.browser, req.urls, req.timeout_s)
+
+
+WORKSPACE_DIR = os.environ.get("DEEP_DIVE_WORKSPACE", "/workspace")
+
+
+class DownloadRequest(BaseModel):
+    url: str = Field(min_length=1)
+
+
+@app.post("/download")
+async def download(req: DownloadRequest) -> dict:
+    log.info("download %s", req.url)
+    return await download_file(req.url, WORKSPACE_DIR)
+
+
+class CloneRequest(BaseModel):
+    git_url: str = Field(min_length=1)
+
+
+@app.post("/clone")
+async def clone(req: CloneRequest) -> dict:
+    log.info("clone %s", req.git_url)
+    return clone_repo(req.git_url, WORKSPACE_DIR)
+
+
+class ListRequest(BaseModel):
+    path: str = Field(default=".")
+
+
+@app.post("/list")
+async def list_endpoint(req: ListRequest) -> dict:
+    log.info("list %s", req.path)
+    return list_files(req.path, WORKSPACE_DIR)
+
+
+class CatRequest(BaseModel):
+    path: str = Field(min_length=1)
+
+
+@app.post("/cat")
+async def cat_endpoint(req: CatRequest) -> dict:
+    log.info("cat %s", req.path)
+    return cat_file(req.path, WORKSPACE_DIR)

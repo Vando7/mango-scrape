@@ -7,9 +7,16 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
+# git for cloning repos; curl is handy for health checks
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir \
     patchright \
     trafilatura \
+    httpx \
     fastapi \
     "uvicorn[standard]" \
     pydantic

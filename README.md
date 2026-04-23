@@ -3,7 +3,7 @@
 Two pieces:
 
 1. **Scraper service** (Docker) — [Dockerfile](Dockerfile), [server.py](server.py), [scraper.py](scraper.py). FastAPI + patchright + trafilatura. Listens on `localhost:8765`.
-2. **MCP shim** (spawned by LM Studio) — [shim/mcp_shim.py](shim/mcp_shim.py). Forwards `deep_dive` tool calls to the container over HTTP.
+2. **MCP shim** (spawned by LM Studio) — [shim/mcp_shim.py](shim/mcp_shim.py). Forwards `deep_dive` and `deep_dive_screenshot` tool calls to the container over HTTP.
 
 ```
 LM Studio ──stdio──▶ mcp_shim.py ──HTTP──▶ localhost:8765 ──▶ FastAPI ──▶ patchright ──▶ trafilatura
@@ -17,6 +17,7 @@ docker compose up -d --build
 # Sanity checks
 curl -s http://localhost:8765/health
 curl -s -X POST http://localhost:8765/scrape -H 'Content-Type: application/json' -d '{"urls":["https://example.com"]}' | jq .
+curl -s -X POST http://localhost:8765/screenshot -H 'Content-Type: application/json' -d '{"urls":["https://example.com"]}' | jq '.[0].screenshot_b64 | length'
 ```
 
 Logs: `docker compose logs -f scraper`. Stop: `docker compose down`.
@@ -64,6 +65,11 @@ Or with plain Python:
 ```
 
 Save — LM Studio auto-reloads. Shim stderr shows in the Program tab; scraper tracebacks show in `docker compose logs`.
+
+## Available tools
+
+- `deep_dive(urls, timeout_s)` — fetches URLs and returns clean markdown + metadata
+- `deep_dive_screenshot(urls, timeout_s)` — takes full-page screenshots, returned as images the model can see
 
 Override the service URL (default `http://localhost:8765`) with `"DEEP_DIVE_URL"` in `env`.
 

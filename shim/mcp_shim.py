@@ -14,7 +14,7 @@ from datetime import date
 
 import httpx
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.utilities.types import Image
+from mcp.types import ImageContent
 
 logging.basicConfig(
     stream=sys.stderr,
@@ -75,10 +75,11 @@ async def deep_dive(urls: list[str], timeout_s: int = 30) -> list[dict]:
 
 
 @mcp.tool()
-async def deep_dive_screenshot(urls: list[str], timeout_s: int = 30) -> list[Image]:
+async def deep_dive_screenshot(urls: list[str], timeout_s: int = 30) -> list[ImageContent]:
     """Fetch one or more URLs and return a full-page screenshot for each.
 
     Forwards to the deep-dive-scraper Docker container (must be running).
+    Returns ImageContent blocks — the model sees actual images, not base64 strings.
     """
     if not urls:
         return []
@@ -93,19 +94,124 @@ async def deep_dive_screenshot(urls: list[str], timeout_s: int = 30) -> list[Ima
             results = r.json()
     except httpx.ConnectError as e:
         log.warning("scraper unreachable: %s", e)
-        return [Image(data=b"error", format="png") for _ in urls]
+        return [
+            ImageContent(type="image", data=base64.b64encode(b"error").decode(), mimeType="image/png")
+            for _ in urls
+        ]
     except httpx.HTTPStatusError as e:
         log.warning("scraper service error: %s", e)
-        return [Image(data=b"error", format="png") for _ in urls]
+        return [
+            ImageContent(type="image", data=base64.b64encode(b"error").decode(), mimeType="image/png")
+            for _ in urls
+        ]
 
     images = []
     for item in results:
         if item.get("status") == "ok" and item.get("screenshot_b64"):
-            raw = base64.b64decode(item["screenshot_b64"])
-            images.append(Image(data=raw))
+            images.append(
+                ImageContent(type="image", data=item["screenshot_b64"], mimeType="image/png")
+            )
         else:
-            images.append(Image(data=b"error", format="png"))
+            images.append(
+                ImageContent(type="image", data=base64.b64encode(b"error").decode(), mimeType="image/png")
+            )
     return images
+
+
+@mcp.tool()
+async def download_file(url: str) -> dict:
+    """Download a file from a URL into the workspace directory.
+
+    The file is saved using its name derived from the URL. Returns metadata
+    including path, filename, size, and MIME type.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                f"{SERVICE_URL}/download",
+                json={"url": url},
+            )
+            r.raise_for_status()
+            return r.json()
+    except httpx.ConnectError as e:
+        log.warning("scraper unreachable: %s", e)
+        return {"status": "error", "url": url, "error": f"service unreachable at {SERVICE_URL}"}
+    except httpx.HTTPStatusError as e:
+        log.warning("download error: %s", e)
+        return {"status": "error", "url": url, "error": f"{e.response.status_code}: {e.response.text[:200]}"}
+
+
+@mcp.tool()
+async def clone_repo(git_url: str) -> dict:
+    """Clone a git repository into the workspace directory.
+
+    The repo is cloned using its name derived from the URL. Returns metadata
+    including path, repo name, and file count.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            r = await client.post(
+                f"{SERVICE_URL}/clone",
+                json={"git_url": git_url},
+            )
+            r.raise_for_status()
+            return r.json()
+    except httpx.ConnectError as e:
+        log.warning("scraper unreachable: %s", e)
+        return {"status": "error", "git_url": git_url, "error": f"service unreachable at {SERVICE_URL}"}
+    except httpx.HTTPStatusError as e:
+        log.warning("clone error: %s", e)
+        return {"status": "error", "git_url": git_url, "error": f"{e.response.status_code}: {e.response.text[:200]}"}
+
+
+@mcp.tool()
+async def list_files(path: str = ".") -> dict:
+    """List files and directories recursively in the workspace.
+
+    Args:
+        path: Path relative to the workspace directory (default '.').
+
+    Returns a listing of all entries with their type, name, and size.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                f"{SERVICE_URL}/list",
+                json={"path": path},
+            )
+            r.raise_for_status()
+            return r.json()
+    except httpx.ConnectError as e:
+        log.warning("scraper unreachable: %s", e)
+        return {"status": "error", "path": path, "error": f"service unreachable at {SERVICE_URL}"}
+    except httpx.HTTPStatusError as e:
+        log.warning("list error: %s", e)
+        return {"status": "error", "path": path, "error": f"{e.response.status_code}: {e.response.text[:200]}"}
+
+
+@mcp.tool()
+async def cat_file(path: str) -> dict:
+    """Read and display the text content of a file in the workspace.
+
+    Args:
+        path: Path to the file relative to the workspace directory.
+
+    Returns the file's content (capped at ~100k chars) along with metadata.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                f"{SERVICE_URL}/cat",
+                json={"path": path},
+            )
+            r.raise_for_status()
+            return r.json()
+    except httpx.ConnectError as e:
+        log.warning("scraper unreachable: %s", e)
+        return {"status": "error", "path": path, "error": f"service unreachable at {SERVICE_URL}"}
+    except httpx.HTTPStatusError as e:
+        log.warning("cat error: %s", e)
+        return {"status": "error", "path": path, "error": f"{e.response.status_code}: {e.response.text[:200]}"}
 
 
 if __name__ == "__main__":
