@@ -20,6 +20,7 @@ from scraper import (
     launch_browser,
     list_files,
     scrape_many,
+    scrape_youtube,
     screenshot_many,
 )
 
@@ -68,6 +69,16 @@ async def health() -> dict:
 async def screenshot(req: ScrapeRequest) -> list[dict]:
     log.info("screenshot %d url(s)", len(req.urls))
     return await screenshot_many(app.state.browser, req.urls, req.timeout_s)
+
+
+@app.post("/scrape_youtube")
+async def scrape_youtube_endpoint(req: ScrapeRequest) -> list[dict]:
+    log.info("scrape_youtube %d url(s)", len(req.urls))
+    results = []
+    for u in req.urls:
+        r = await scrape_youtube(app.state.browser, u, req.timeout_s)
+        results.append(r)
+    return results
 
 
 WORKSPACE_DIR = os.environ.get("DEEP_DIVE_WORKSPACE", "/workspace")

@@ -19,7 +19,8 @@ RUN pip install --no-cache-dir \
     httpx \
     fastapi \
     "uvicorn[standard]" \
-    pydantic
+    pydantic \
+    youtube-transcript-api
 
 # Download patchright's patched Chromium (separate binary from the stock playwright one).
 RUN patchright install chromium

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from typing import Any
 import httpx
 import trafilatura
 from patchright.async_api import Browser, async_playwright
+from youtube_transcript_api import YouTubeTranscriptApi
 
 log = logging.getLogger("deep-dive.scraper")
 
@@ -94,6 +96,168 @@ async def _extract_reddit_comments(page) -> str:
     except Exception as e:
         log.warning("reddit comment extraction failed: %s", e)
         return ""
+
+
+def _extract_video_id(url: str) -> str | None:
+    """Extract YouTube video ID from various URL formats."""
+    patterns = [
+        r"(?:youtube\.com/.*v=)([\w-]{11})",
+        r"(?:youtu\.be/)([\w-]{11})",
+        r"(?:youtube\.com/embed/)([\w-]{11})",
+        r"(?:youtube\.com/v/)([\w-]{11})",
+        r"(?:youtube\.com/shorts/)([\w-]{11})",
+        r"(?:youtube\.com/watch[^&]*&v=)([\w-]{11})",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, url)
+        if m:
+            return m.group(1)
+    # Also try plain 11-char ID
+    m = re.search(r"([\w-]{11})", url)
+    if m and len(m.group(1)) == 11:
+        return m.group(1)
+    return None
+
+
+async def _fetch_transcript(video_id: str, timeout_s: int) -> dict:
+    """Fetch transcript for a YouTube video ID."""
+    try:
+        yt_api = YouTubeTranscriptApi()
+        # Try English first, then auto-detect
+        try:
+            transcript_list = yt_api.fetch(video_id, languages=["en", "en-GB"])
+        except Exception:
+            transcript_list = yt_api.fetch(video_id)
+
+        # FetchedTranscript has .snippets (list of FetchedTranscriptSnippet with .text)
+        text_parts = [s.text for s in transcript_list.snippets]
+        full_text = " ".join(text_parts)
+
+        return {
+            "status": "ok",
+            "video_id": video_id,
+            "transcript": full_text,
+            "word_count": len(full_text.split()) if full_text else 0,
+            "language": transcript_list.language if hasattr(transcript_list, 'language') else "unknown",
+        }
+    except Exception as e:
+        log.warning("transcript fetch failed for %s: %s", video_id, e)
+        return {
+            "status": "error",
+            "video_id": video_id,
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+async def _scrape_youtube_comments(browser: Browser, url: str, timeout_s: int) -> dict:
+    """Scrape YouTube comments using Playwright."""
+    context = None
+    try:
+        context = await _make_context(browser)
+        page = await context.new_page()
+        log.info("scraping youtube comments from %s", url)
+        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
+        # Wait for comments to load
+        try:
+            await page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+        # Scroll to trigger lazy-loaded comments
+        await _scroll_page(page, scroll_count=20, delay_ms=300)
+        await asyncio.sleep(1)
+
+        # Extract comments from DOM
+        try:
+            comments = await page.evaluate("""
+                (() => {
+                    const results = [];
+                    // YouTube comment structure: [data-item-id] or [jscontent="dropdownButton"]
+                    document.querySelectorAll('[data-item-id], [class*="comment-text"]').forEach(el => {
+                        const text = el.innerText?.trim();
+                        if (text && text.length > 10) {
+                            results.push(text);
+                        }
+                    });
+                    // Also try class-based selectors
+                    document.querySelectorAll('[class*="comment-body"], [class*="comment-text-wrapper"]').forEach(el => {
+                        const text = el.innerText?.trim();
+                        if (text && text.length > 10) {
+                            let isDup = results.some(r => r.startsWith(text.substring(0, 30)));
+                            if (!isDup) results.push(text);
+                        }
+                    });
+                    return results;
+                })()
+            """)
+        except Exception:
+            comments = []
+
+        # Deduplicate
+        seen = set()
+        unique_comments = []
+        for c in (comments or []):
+            if c not in seen and len(c) > 10:
+                seen.add(c)
+                unique_comments.append(c)
+
+        return {
+            "status": "ok",
+            "url": url,
+            "comment_count": len(unique_comments),
+            "comments": unique_comments[:200],  # cap at 200 comments
+        }
+    except Exception as e:
+        log.warning("youtube comment scrape failed: %s", e)
+        return {
+            "status": "error",
+            "url": url,
+            "error": f"{type(e).__name__}: {e}",
+        }
+    finally:
+        if context is not None:
+            try:
+                await context.close()
+            except Exception:
+                pass
+
+
+async def scrape_youtube(browser: Browser, url: str, timeout_s: int) -> dict:
+    """Scrape a YouTube video: transcript + comments."""
+    video_id = _extract_video_id(url)
+    if not video_id:
+        return {"status": "error", "url": url, "error": "Could not extract video ID from URL"}
+
+    # Fetch transcript (no browser needed)
+    transcript_result = await _fetch_transcript(video_id, timeout_s)
+
+    # Scrape comments (needs browser)
+    comment_result = await _scrape_youtube_comments(browser, url, timeout_s)
+
+    # Combine results
+    content_parts = []
+    if transcript_result.get("status") == "ok":
+        content_parts.append(f"# Transcript\n\n{transcript_result['transcript']}")
+    else:
+        content_parts.append(f"# Transcript Error: {transcript_result.get('error', 'unknown')}")
+
+    if comment_result.get("status") == "ok":
+        comments_text = "\n\n---\n\n".join(comment_result["comments"][:50])  # top 50 for content
+        content_parts.append(f"\n# Comments ({comment_result['comment_count']} total)\n\n{comments_text}")
+    else:
+        content_parts.append(f"\n# Comments Error: {comment_result.get('error', 'unknown')}")
+
+    full_content = "\n\n".join(content_parts)
+
+    return {
+        "url": url,
+        "status": "ok",
+        "video_id": video_id,
+        "title": f"YouTube: {video_id}",
+        "markdown_content": full_content,
+        "word_count": len(full_content.split()) if full_content else 0,
+        "transcript_status": transcript_result.get("status", "error"),
+        "comment_count": comment_result.get("comment_count", 0) if comment_result.get("status") == "ok" else 0,
+    }
 
 
 async def _make_context(browser: Browser) -> Any:

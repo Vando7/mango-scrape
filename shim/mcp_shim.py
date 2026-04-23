@@ -119,6 +119,46 @@ async def deep_dive_screenshot(urls: list[str], timeout_s: int = 30) -> list[Ima
 
 
 @mcp.tool()
+async def scrape_youtube(urls: list[str], timeout_s: int = 30) -> list[dict]:
+    """Scrape YouTube videos: returns transcript + comments for each URL.
+
+    Forwards to the deep-dive-scraper Docker container (must be running).
+    Returns markdown content with transcript and top comments.
+    """
+    if not urls:
+        return []
+    client_timeout = max(60, timeout_s * len(urls) + 30)
+    try:
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            r = await client.post(
+                f"{SERVICE_URL}/scrape_youtube",
+                json={"urls": urls, "timeout_s": timeout_s},
+            )
+            r.raise_for_status()
+            return r.json()
+    except httpx.ConnectError as e:
+        log.warning("scraper unreachable: %s", e)
+        return [
+            {
+                "url": u,
+                "status": "error",
+                "error": f"scraper service unreachable at {SERVICE_URL} — is `docker compose up` running?",
+            }
+            for u in urls
+        ]
+    except httpx.HTTPStatusError as e:
+        log.warning("youtube scrape error: %s", e)
+        return [
+            {
+                "url": u,
+                "status": "error",
+                "error": f"service {e.response.status_code}: {e.response.text[:200]}",
+            }
+            for u in urls
+        ]
+
+
+@mcp.tool()
 async def download_file(url: str) -> dict:
     """Download a file from a URL into the workspace directory.
 
