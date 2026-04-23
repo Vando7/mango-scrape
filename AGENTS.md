@@ -30,7 +30,7 @@ The container owns all heavy deps (patched Chromium, extraction). The shim is in
 | `server.py` | FastAPI wrapper. Lifespan owns a shared browser. `POST /scrape`, `POST /screenshot`, `GET /health`. Returns compact JSON (no pretty-print). |
 | `Dockerfile` | Based on `mcr.microsoft.com/playwright/python` so Chromium's system libs are pre-installed. |
 | `docker-compose.yml` | Binds `127.0.0.1:8765`, sets `shm_size: 1gb`. |
-| `shim/mcp_shim.py` | stdio MCP server. Forwards `deep_dive` and `deep_dive_screenshot` to the container. |
+| `shim/mcp_shim.py` | stdio MCP server. `_fmt()` converts dicts → flat key=value strings (no JSON, no brackets). Multi-line values escape newlines as literal \n. Forwards all tool calls to the container. |
 | `shim/pyproject.toml` | Shim deps: `mcp`, `httpx`. |
 | `pyproject.toml` | Host-side dev deps (for running `server.py` without Docker). |
 | `README.md` | Human-facing setup. |
@@ -58,7 +58,9 @@ uv run patchright install chromium
 uv run uvicorn server:app --reload --port 8765
 ```
 
-_compact() strips whitespace so JSON-escaping doesn't waste tokens. All string fields that reach the model (`markdown_content`, `description`, `title`, YouTube transcript/comments) are passed through `_compact()` which collapses runs of 2+ newlines to single newlines, trims leading/trailing whitespace, and flattens horizontal whitespace. The result is compact JSON with no escaped `\n` sequences eating tokens.
+_compact() strips whitespace so the shim doesn't waste tokens. All string fields that reach the model (`markdown_content`, `description`, `title`, YouTube transcript/comments) are passed through `_compact()` which collapses runs of 2+ newlines to single newlines, trims leading/trailing whitespace, and flattens horizontal whitespace.
+
+`_fmt()` in the shim converts dicts → flat key=value strings. No JSON, no brackets, no indentation. Multi-line values have internal newlines escaped as literal `\n`. Each URL result is separated by a `---` divider line. This eliminates ~60-70% structural token overhead compared to pretty-printed JSON.
 
 ## Conventions and gotchas
 

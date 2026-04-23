@@ -2,6 +2,9 @@
 
 LM Studio (on Windows) spawns this via stdio; it HTTP-POSTs into the
 deep-dive-scraper container running on WSL.
+
+All tool responses are flat key=value strings — no JSON, no brackets,
+no indentation. Multi-line values have internal newlines escaped as \n.
 """
 
 from __future__ import annotations
@@ -28,6 +31,25 @@ SERVICE_URL = os.environ.get("DEEP_DIVE_URL", "http://localhost:8765")
 mcp = FastMCP("deep-dive")
 
 
+def _fmt(r: dict) -> str:
+    """Format a single URL result as flat key=value lines.
+
+    Multi-line values (markdown_content, description, transcript) have
+    internal newlines escaped as literal \\n so the model sees one line per field.
+    """
+    parts = []
+    for k, v in r.items():
+        if isinstance(v, str):
+            # Escape backslashes first, then real newlines → literal \n
+            val = v.replace("\\", "\\\\").replace("\n", "\\n")
+            parts.append(f"{k}={val}")
+        elif isinstance(v, (int, float)):
+            parts.append(f"{k}={v}")
+        else:
+            parts.append(f"{k}={v}")
+    return "\n".join(parts)
+
+
 @mcp.tool()
 async def get_date() -> str:
     """Return today's date."""
@@ -35,14 +57,14 @@ async def get_date() -> str:
 
 
 @mcp.tool()
-async def deep_dive(urls: list[str], timeout_s: int = 30) -> list[dict]:
+async def deep_dive(urls: list[str], timeout_s: int = 30) -> str:
     """Fetch one or more URLs and return clean markdown + metadata for each.
 
     Forwards to the deep-dive-scraper Docker container (must be running).
+    Returns flat key=value lines — no JSON, no brackets.
     """
     if not urls:
-        return []
-    # Pad the HTTP timeout so per-URL browser timeouts can expire server-side first.
+        return ""
     client_timeout = max(60, timeout_s * len(urls) + 30)
     try:
         async with httpx.AsyncClient(timeout=client_timeout) as client:
@@ -51,10 +73,10 @@ async def deep_dive(urls: list[str], timeout_s: int = 30) -> list[dict]:
                 json={"urls": urls, "timeout_s": timeout_s},
             )
             r.raise_for_status()
-            return r.json()
+            results = r.json()
     except httpx.ConnectError as e:
         log.warning("scraper unreachable: %s", e)
-        return [
+        results = [
             {
                 "url": u,
                 "status": "error",
@@ -64,7 +86,7 @@ async def deep_dive(urls: list[str], timeout_s: int = 30) -> list[dict]:
         ]
     except httpx.HTTPStatusError as e:
         log.warning("scraper service error: %s", e)
-        return [
+        results = [
             {
                 "url": u,
                 "status": "error",
@@ -72,6 +94,9 @@ async def deep_dive(urls: list[str], timeout_s: int = 30) -> list[dict]:
             }
             for u in urls
         ]
+
+    # Separate blocks per URL with a divider
+    return "\n---\n".join(_fmt(r) for r in results)
 
 
 @mcp.tool()
@@ -119,24 +144,16 @@ async def deep_dive_screenshot(urls: list[str], timeout_s: int = 30) -> list[Ima
 
 
 @mcp.tool()
-async def get_youtube_transcript(urls: list[str], timeout_s: int = 30) -> list[dict]:
+async def get_youtube_transcript(urls: list[str], timeout_s: int = 30) -> str:
     """Fetch YouTube video transcripts + metadata for one or more URLs.
 
     Forwards to the deep-dive-scraper Docker container (must be running).
-    Returns structured data including:
-      - title: Full video title from page <title> tag
-      - channel: Channel name extracted from meta tags / JSON-LD
-      - upload_date: ISO 8601 date string from YouTube metadata
-      - description: Video description text (truncated in markdown_content)
-      - transcript_status: 'ok' if transcript was fetched, 'error' otherwise
-      - word_count: Total words across all returned content
-      - markdown_content: Full transcript text under '# Transcript' heading
-    
-    Note: Uses youtube-transcript-api for caption tracks (no browser needed).
-    Comments are not included — this tool focuses on transcript + metadata only.
+    Returns flat key=value lines — no JSON, no brackets.
+    Fields: url, status, video_id, title, channel, upload_date, description,
+            markdown_content, word_count, transcript_status, comment_count.
     """
     if not urls:
-        return []
+        return ""
     client_timeout = max(60, timeout_s * len(urls) + 30)
     try:
         async with httpx.AsyncClient(timeout=client_timeout) as client:
@@ -145,10 +162,10 @@ async def get_youtube_transcript(urls: list[str], timeout_s: int = 30) -> list[d
                 json={"urls": urls, "timeout_s": timeout_s},
             )
             r.raise_for_status()
-            return r.json()
+            results = r.json()
     except httpx.ConnectError as e:
         log.warning("scraper unreachable: %s", e)
-        return [
+        results = [
             {
                 "url": u,
                 "status": "error",
@@ -158,7 +175,7 @@ async def get_youtube_transcript(urls: list[str], timeout_s: int = 30) -> list[d
         ]
     except httpx.HTTPStatusError as e:
         log.warning("youtube scrape error: %s", e)
-        return [
+        results = [
             {
                 "url": u,
                 "status": "error",
@@ -167,13 +184,14 @@ async def get_youtube_transcript(urls: list[str], timeout_s: int = 30) -> list[d
             for u in urls
         ]
 
+    return "\n---\n".join(_fmt(r) for r in results)
+
 
 @mcp.tool()
-async def download_file(url: str) -> dict:
+async def download_file(url: str) -> str:
     """Download a file from a URL into the workspace directory.
 
-    The file is saved using its name derived from the URL. Returns metadata
-    including path, filename, size, and MIME type.
+    Returns flat key=value lines with path, filename, size, mime_type.
     """
     try:
         async with httpx.AsyncClient(timeout=60) as client:
@@ -182,21 +200,20 @@ async def download_file(url: str) -> dict:
                 json={"url": url},
             )
             r.raise_for_status()
-            return r.json()
+            return _fmt(r.json())
     except httpx.ConnectError as e:
         log.warning("scraper unreachable: %s", e)
-        return {"status": "error", "url": url, "error": f"service unreachable at {SERVICE_URL}"}
+        return _fmt({"status": "error", "url": url, "error": f"service unreachable at {SERVICE_URL}"})
     except httpx.HTTPStatusError as e:
         log.warning("download error: %s", e)
-        return {"status": "error", "url": url, "error": f"{e.response.status_code}: {e.response.text[:200]}"}
+        return _fmt({"status": "error", "url": url, "error": f"{e.response.status_code}: {e.response.text[:200]}"})
 
 
 @mcp.tool()
-async def clone_repo(git_url: str) -> dict:
+async def clone_repo(git_url: str) -> str:
     """Clone a git repository into the workspace directory.
 
-    The repo is cloned using its name derived from the URL. Returns metadata
-    including path, repo name, and file count.
+    Returns flat key=value lines with path, repo_name, file_count.
     """
     try:
         async with httpx.AsyncClient(timeout=120) as client:
@@ -205,23 +222,20 @@ async def clone_repo(git_url: str) -> dict:
                 json={"git_url": git_url},
             )
             r.raise_for_status()
-            return r.json()
+            return _fmt(r.json())
     except httpx.ConnectError as e:
         log.warning("scraper unreachable: %s", e)
-        return {"status": "error", "git_url": git_url, "error": f"service unreachable at {SERVICE_URL}"}
+        return _fmt({"status": "error", "git_url": git_url, "error": f"service unreachable at {SERVICE_URL}"})
     except httpx.HTTPStatusError as e:
         log.warning("clone error: %s", e)
-        return {"status": "error", "git_url": git_url, "error": f"{e.response.status_code}: {e.response.text[:200]}"}
+        return _fmt({"status": "error", "git_url": git_url, "error": f"{e.response.status_code}: {e.response.text[:200]}"})
 
 
 @mcp.tool()
-async def list_files(path: str = ".") -> dict:
+async def list_files(path: str = ".") -> str:
     """List files and directories recursively in the workspace.
 
-    Args:
-        path: Path relative to the workspace directory (default '.').
-
-    Returns a listing of all entries with their type, name, and size.
+    Returns flat key=value lines with status, path, total_entries, entries.
     """
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -230,23 +244,21 @@ async def list_files(path: str = ".") -> dict:
                 json={"path": path},
             )
             r.raise_for_status()
-            return r.json()
+            return _fmt(r.json())
     except httpx.ConnectError as e:
         log.warning("scraper unreachable: %s", e)
-        return {"status": "error", "path": path, "error": f"service unreachable at {SERVICE_URL}"}
+        return _fmt({"status": "error", "path": path, "error": f"service unreachable at {SERVICE_URL}"})
     except httpx.HTTPStatusError as e:
         log.warning("list error: %s", e)
-        return {"status": "error", "path": path, "error": f"{e.response.status_code}: {e.response.text[:200]}"}
+        return _fmt({"status": "error", "path": path, "error": f"{e.response.status_code}: {e.response.text[:200]}"})
 
 
 @mcp.tool()
-async def cat_file(path: str) -> dict:
+async def cat_file(path: str) -> str:
     """Read and display the text content of a file in the workspace.
 
-    Args:
-        path: Path to the file relative to the workspace directory.
-
-    Returns the file's content (capped at ~100k chars) along with metadata.
+    Returns flat key=value lines with status, path, filename, size, content.
+    Content is multi-line; internal newlines escaped as \\n.
     """
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -255,13 +267,13 @@ async def cat_file(path: str) -> dict:
                 json={"path": path},
             )
             r.raise_for_status()
-            return r.json()
+            return _fmt(r.json())
     except httpx.ConnectError as e:
         log.warning("scraper unreachable: %s", e)
-        return {"status": "error", "path": path, "error": f"service unreachable at {SERVICE_URL}"}
+        return _fmt({"status": "error", "path": path, "error": f"service unreachable at {SERVICE_URL}"})
     except httpx.HTTPStatusError as e:
         log.warning("cat error: %s", e)
-        return {"status": "error", "path": path, "error": f"{e.response.status_code}: {e.response.text[:200]}"}
+        return _fmt({"status": "error", "path": path, "error": f"{e.response.status_code}: {e.response.text[:200]}"})
 
 
 if __name__ == "__main__":

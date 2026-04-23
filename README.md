@@ -2,8 +2,8 @@
 
 Two pieces:
 
-1. **Scraper service** (Docker) — [Dockerfile](Dockerfile), [server.py](server.py), [scraper.py](scraper.py). FastAPI + patchright + trafilatura. Listens on `localhost:8765`. Returns compact JSON.
-2. **MCP shim** (spawned by LM Studio) — [shim/mcp_shim.py](shim/mcp_shim.py). Forwards `deep_dive` and `deep_dive_screenshot` tool calls to the container over HTTP.
+1. **Scraper service** (Docker) — [Dockerfile](Dockerfile), [server.py](server.py), [scraper.py](scraper.py). FastAPI + patchright + trafilatura. Listens on `localhost:8765`.
+2. **MCP shim** (spawned by LM Studio) — [shim/mcp_shim.py](shim/mcp_shim.py). Converts all tool responses to flat key=value strings (no JSON, no brackets). Forwards calls to the container over HTTP.
 
 ```
 LM Studio ──stdio──▶ mcp_shim.py ──HTTP──▶ localhost:8765 ──▶ FastAPI ──▶ patchright ──▶ trafilatura
@@ -71,8 +71,15 @@ Save — LM Studio auto-reloads. Shim stderr shows in the Program tab; scraper t
 
 ## Available tools
 
+All text-based tools return flat key=value lines (no JSON). Multi-line values escape newlines as literal `\n`. Results for multiple URLs are separated by `---`.
+
 - `deep_dive(urls, timeout_s)` — fetches URLs and returns clean markdown + metadata
-- `deep_dive_screenshot(urls, timeout_s)` — takes full-page screenshots, returned as images the model can see
+- `deep_dive_screenshot(urls, timeout_s)` — takes full-page screenshots, returned as images the model can see (ImageContent blocks)
+- `get_youtube_transcript(urls, timeout_s)` — YouTube transcript + video metadata
+- `download_file(url)` — downloads a file into workspace
+- `clone_repo(git_url)` — clones a git repo into workspace
+- `list_files(path)` — lists files in workspace
+- `cat_file(path)` — reads a file from workspace
 
 ### Reddit support
 
@@ -82,6 +89,23 @@ Reddit URLs are handled automatically with a fallback chain: www.reddit.com → 
 - **old.reddit.com**: cleanest HTML structure but often blocked by bot detection
 
 Override the service URL (default `http://localhost:8765`) with `"DEEP_DIVE_URL"` in `env`.
+
+## Output format
+
+All text-based tool responses are flat key=value lines:
+```
+url=https://example.com
+status=ok
+title=Page Title
+description=A short description\nwith escaped newlines
+markdown_content=First paragraph\nSecond paragraph\nThird paragraph
+word_count=150
+---
+url=https://another.com
+status=error
+error=navigation failed: TimeoutError
+```
+No JSON, no brackets, no indentation. Multi-line values escape real newlines as literal `\n`.
 
 ## Troubleshooting
 
