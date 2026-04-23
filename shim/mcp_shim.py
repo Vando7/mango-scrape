@@ -119,11 +119,21 @@ async def deep_dive_screenshot(urls: list[str], timeout_s: int = 30) -> list[Ima
 
 
 @mcp.tool()
-async def scrape_youtube(urls: list[str], timeout_s: int = 30) -> list[dict]:
-    """Scrape YouTube videos: returns transcript + comments for each URL.
+async def get_youtube_transcript(urls: list[str], timeout_s: int = 30) -> list[dict]:
+    """Fetch YouTube video transcripts + metadata for one or more URLs.
 
     Forwards to the deep-dive-scraper Docker container (must be running).
-    Returns markdown content with transcript and top comments.
+    Returns structured data including:
+      - title: Full video title from page <title> tag
+      - channel: Channel name extracted from meta tags / JSON-LD
+      - upload_date: ISO 8601 date string from YouTube metadata
+      - description: Video description text (truncated in markdown_content)
+      - transcript_status: 'ok' if transcript was fetched, 'error' otherwise
+      - word_count: Total words across all returned content
+      - markdown_content: Full transcript text under '# Transcript' heading
+    
+    Note: Uses youtube-transcript-api for caption tracks (no browser needed).
+    Comments are not included — this tool focuses on transcript + metadata only.
     """
     if not urls:
         return []
