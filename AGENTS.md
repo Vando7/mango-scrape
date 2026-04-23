@@ -26,7 +26,7 @@ The container owns all heavy deps (patched Chromium, extraction). The shim is in
 
 | Path | Role |
 |---|---|
-| `scraper.py` | Scraping logic. `launch_browser`, `scrape_one`, `scrape_many`, `screenshot_one`, `screenshot_many`. No framework deps. |
+| `scraper.py` | Scraping logic. `launch_browser`, `_scroll_page`, `_extract_reddit_comments`, `scrape_one`, `scrape_many`. Reddit-specific: scroll + network idle wait + include_comments=True + www→old.reddit→m.reddit fallback chain. |
 | `server.py` | FastAPI wrapper. Lifespan owns a shared browser. `POST /scrape`, `POST /screenshot`, `GET /health`. |
 | `Dockerfile` | Based on `mcr.microsoft.com/playwright/python` so Chromium's system libs are pre-installed. |
 | `docker-compose.yml` | Binds `127.0.0.1:8765`, sets `shm_size: 1gb`. |
@@ -77,6 +77,8 @@ uv run uvicorn server:app --reload --port 8765
 **LM Studio mcp.json.** Located at `~/.lmstudio/mcp.json` (or `%USERPROFILE%\.lmstudio\mcp.json` on Windows). Follows Cursor's notation: `{"mcpServers": {...}}` with `command`/`args`/`env` for stdio, `{"url": ...}` for remote. LM Studio spawns processes without inheriting shell PATH — `command` must be an absolute path. Per-server stderr is visible in the Program tab.
 
 **Screenshots return MCP ImageContent.** `deep_dive_screenshot` in the shim forwards screenshot b64 from the container into `mcp.types.ImageContent(type="image", data=<b64>, mimeType="image/png")` blocks. These serialize directly as image content blocks with base64 data and mime type — the model sees actual images, not opaque strings.
+
+**Reddit scraping.** For `reddit.com` URLs (not old.reddit or m.reddit), scraper.py tries: www first → old.reddit → m.reddit. On www.reddit.com it waits longer for network idle (`timeout_s * 500ms`) and scrolls the page to trigger lazy-loaded comments. trafilatura is called with `include_comments=True`. The `_extract_reddit_comments()` JS function attempts DOM extraction as a fallback, but Reddit's virtualized comment UI means only ~30-40 top comments are typically captured (thousands more require clicking "Load more" which triggers XHR API calls). old.reddit.com often blocks headless browsers with bot detection; m.reddit.com works but loads fewer comments.
 
 ## External references
 
