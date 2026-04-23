@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import re
 import subprocess
@@ -150,12 +151,12 @@ async def _fetch_transcript(video_id: str, timeout_s: int) -> dict:
 
 
 async def _scrape_youtube_comments(browser: Browser, url: str, timeout_s: int) -> dict:
-    """Scrape YouTube comments using Playwright."""
+    """Scrape YouTube comments + metadata using Playwright."""
     context = None
     try:
         context = await _make_context(browser)
         page = await context.new_page()
-        log.info("scraping youtube comments from %s", url)
+        log.info("scraping youtube from %s", url)
         await page.goto(url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
         # Wait for comments to load
         try:
@@ -165,6 +166,57 @@ async def _scrape_youtube_comments(browser: Browser, url: str, timeout_s: int) -
         # Scroll to trigger lazy-loaded comments
         await _scroll_page(page, scroll_count=20, delay_ms=300)
         await asyncio.sleep(1)
+
+        # Extract metadata from page (title, channel, date, description)
+        meta = await page.evaluate("""
+            (() => {
+                const result = {};
+                // Video title from <title> tag
+                result.title = document.querySelector('title')?.innerText || '';
+                // Clean up YouTube title format: "Video Title - Channel | YouTube"
+                if (result.title.includes('|')) {
+                    result.title = result.title.split('|')[0].trim();
+                }
+                // Meta description
+                const descMeta = document.querySelector('meta[name="description"]');
+                result.description = descMeta?.content || '';
+                // Try to find structured data in og: meta tags
+                const ogTags = document.querySelectorAll('meta[property]');
+                for (const tag of ogTags) {
+                    const prop = tag.getAttribute('property');
+                    if (prop === 'og:title' && !result.title) result.title = tag.content;
+                    if (prop === 'og:description') result.description = tag.content;
+                    if (prop === 'og:video:uploader') result.channel = tag.content;
+                }
+                // Try JSON-LD
+                try {
+                    const scripts = document.querySelectorAll('script');
+                    for (const s of scripts) {
+                        if (!s.textContent || !s.textContent.includes('@context')) continue;
+                        try {
+                            const data = JSON.parse(s.textContent);
+                            if (data?.name && data['@context']) {
+                                result.channel = data.author?.name || '';
+                                result.upload_date = data.datePublished || data.uploadDate || '';
+                                break;
+                            }
+                        } catch(e) {}
+                    }
+                } catch(e) {}
+
+                // Fallback: try to get channel from page elements
+                if (!result.channel) {
+                    const ytChannel = document.querySelector('#channel-name a[href]');
+                    if (ytChannel) result.channel = ytChannel.textContent?.trim();
+                }
+                if (!result.channel) {
+                    const ytMeta = document.querySelector('meta[name="og:video:creator"]');
+                    if (ytMeta) result.channel = ytMeta.content;
+                }
+
+                return JSON.stringify(result);
+            })()
+        """)
 
         # Extract comments from DOM
         try:
@@ -200,11 +252,22 @@ async def _scrape_youtube_comments(browser: Browser, url: str, timeout_s: int) -
                 seen.add(c)
                 unique_comments.append(c)
 
+        # Parse metadata JSON string
+        video_meta = {}
+        try:
+            video_meta = json.loads(meta)
+        except Exception:
+            pass
+
         return {
             "status": "ok",
             "url": url,
             "comment_count": len(unique_comments),
             "comments": unique_comments[:200],  # cap at 200 comments
+            "video_title": video_meta.get("title", ""),
+            "channel": video_meta.get("channel", ""),
+            "upload_date": video_meta.get("upload_date", ""),
+            "description": video_meta.get("description", ""),
         }
     except Exception as e:
         log.warning("youtube comment scrape failed: %s", e)
@@ -252,7 +315,10 @@ async def scrape_youtube(browser: Browser, url: str, timeout_s: int) -> dict:
         "url": url,
         "status": "ok",
         "video_id": video_id,
-        "title": f"YouTube: {video_id}",
+        "title": comment_result.get("video_title", f"YouTube: {video_id}"),
+        "channel": comment_result.get("channel", ""),
+        "upload_date": comment_result.get("upload_date", ""),
+        "description": comment_result.get("description", ""),
         "markdown_content": full_content,
         "word_count": len(full_content.split()) if full_content else 0,
         "transcript_status": transcript_result.get("status", "error"),
