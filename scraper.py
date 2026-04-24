@@ -340,8 +340,17 @@ async def scrape_youtube(browser: Browser, url: str, timeout_s: int) -> dict:
     }
 
 
-async def _make_context(browser: Browser) -> Any:
+async def _make_context(browser: Browser, is_reddit: bool = False) -> Any:
     """Create a stealthy browser context with realistic fingerprints."""
+    extra_headers = None
+    if is_reddit:
+        extra_headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+        }
     ctx = await browser.new_context(
         user_agent=(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -350,16 +359,74 @@ async def _make_context(browser: Browser) -> Any:
         ),
         locale="en-US",
         viewport={"width": 1920, "height": 1080},
+        extra_http_headers=extra_headers,
     )
     return ctx
+
+
+async def _inject_stealth(page) -> None:
+    """Inject stealth scripts to bypass bot detection (old.reddit.com etc)."""
+    # Run before navigation so properties are set from the start
+    await page.add_init_script("""
+        // Override navigator.webdriver
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined,
+        });
+
+        // Override chrome runtime (missing in headless)
+        window.chrome = { runtime: {} };
+
+        // Override plugins
+        const querySelector = Document.prototype.querySelector;
+        Document.prototype.querySelector = function(q) {
+            const result = querySelector.apply(this, arguments);
+            if (result && q.includes('script[src*="recaptcha"]')) {
+                return null;  // Block recaptcha detection
+            }
+            return result;
+        };
+
+        // Override permissions
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+                Promise.resolve({ state: Notification.permission }) :
+                originalQuery(parameters)
+        );
+
+        // Override plugins and mimeTypes
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => {
+                const plugin = function() { return undefined; };
+                const search = function(query) { return null; };
+                plugin.toString = function() { return "[object Plugin]"; };
+                const plugins = new Proxy({}, {
+                    get: (target, prop) => search(prop),
+                    length: 0,
+                    [Symbol.iterator]: () => ({ next: () => ({ done: true }) }),
+                });
+                return Object.setPrototypeOf(plugins, PluginArray.prototype);
+            },
+        });
+
+        // Override languages
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en'],
+        });
+
+        // Override hardware concurrency (common bot detection vector)
+        Object.defineProperty(navigator, 'hardwareConcurrency', {
+            get: () => 4,
+        });
+    """)
 
 
 async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
     """Scrape one URL. Always returns a dict — errors are captured, never raised.
 
-    For Reddit URLs, tries multiple strategies (mobile → old Reddit).
+    For Reddit URLs, tries old.reddit first (lighter, easier to parse), then www, then m.reddit.
     """
-    # Reddit-specific fallback chain: www first (more comments), then old.reddit, then m.reddit
+    # Reddit-specific fallback chain: old.reddit first (cleanest HTML), then www, then m.reddit
     urls_to_try = [url]
     if "reddit.com" in url and not url.startswith("old.reddit") and not url.startswith("m.reddit"):
         base = url.split("?")[0].rstrip("/")
@@ -367,8 +434,8 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
         parts = base.split("/", 3)  # ["https:", "", "www.reddit.com", "/r/python"]
         path = f"/{parts[3]}" if len(parts) > 3 else ""
         urls_to_try = [
-            url,
             f"https://old.reddit.com{path}",
+            url,
             f"https://m.reddit.com{path}",
         ]
 
@@ -377,16 +444,21 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
     last_error: str | None = None
 
     for attempt_url in urls_to_try:
-        context = await _make_context(browser)
+        is_reddit = "reddit.com" in attempt_url
+        context = await _make_context(browser, is_reddit=is_reddit)
         page = await context.new_page()
         reddit_comments_html: str | None = None
         html: str | None = None
         last_error: str | None = None
         try:
             log.info("scrape attempt: %s", attempt_url)
+            # Inject stealth scripts for bot detection bypass (must run before navigation)
+            is_reddit = "reddit.com" in attempt_url
+            if is_reddit:
+                await _inject_stealth(page)
             # Intercept API responses for Reddit
             api_responses: list[str] = []
-            if "reddit.com" in attempt_url:
+            if is_reddit:
                 page.on("response", lambda resp: (
                     lambda url: (api_responses.append(url) if "graphql" in url or "/comments.json" in url else None)
                 )(resp.url))
