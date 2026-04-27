@@ -8,8 +8,8 @@ import httpx
 import pytest
 
 
-# Server URL — defaults to localhost:8765 (Docker container)
-SERVER_URL = os.environ.get("SCRAPER_SERVER_URL", "http://localhost:8765")
+# Server URL — defaults to localhost:9161 (Docker container)
+SERVER_URL = os.environ.get("SCRAPER_SERVER_URL", "http://localhost:9161")
 
 
 

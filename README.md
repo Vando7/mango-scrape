@@ -2,11 +2,11 @@
 
 Two pieces:
 
-1. **Scraper service** (Docker) — [Dockerfile](Dockerfile), [server.py](server.py), [scraper.py](scraper.py). FastAPI + patchright + trafilatura. Listens on `localhost:8765`.
+1. **Scraper service** (Docker) — [Dockerfile](Dockerfile), [server.py](server.py), [scraper.py](scraper.py). FastAPI + patchright + trafilatura. Exposed at `localhost:9161`.
 2. **MCP shim** (spawned by LM Studio) — [shim/mcp_shim.py](shim/mcp_shim.py). Converts all tool responses to flat key=value strings (no JSON, no brackets). Forwards calls to the container over HTTP.
 
 ```
-LM Studio ──stdio──▶ mcp_shim.py ──HTTP──▶ localhost:8765 ──▶ FastAPI ──▶ patchright ──▶ trafilatura
+LM Studio ──stdio──▶ mcp_shim.py ──HTTP──▶ localhost:9161 ──▶ FastAPI ──▶ patchright ──▶ trafilatura
 ```
 
 ## Run the scraper
@@ -15,12 +15,12 @@ LM Studio ──stdio──▶ mcp_shim.py ──HTTP──▶ localhost:8765 �
 docker compose up -d --build
 
 # Sanity checks
-curl -s http://localhost:8765/health
-curl -s -X POST http://localhost:8765/scrape -H 'Content-Type: application/json' -d '{"urls":["https://example.com"]}' | jq .
-curl -s -X POST http://localhost:8765/screenshot -H 'Content-Type: application/json' -d '{"urls":["https://example.com"]}' | jq '.[0].screenshot_b64 | length'
+curl -s http://localhost:9161/health
+curl -s -X POST http://localhost:9161/scrape -H 'Content-Type: application/json' -d '{"urls":["https://example.com"]}' | jq .
+curl -s -X POST http://localhost:9161/screenshot -H 'Content-Type: application/json' -d '{"urls":["https://example.com"]}' | jq '.[0].screenshot_b64 | length'
 
 # Reddit (auto-scrolls for comments)
-curl -s -X POST http://localhost:8765/scrape -H 'Content-Type: application/json' -d '{"urls":["https://www.reddit.com/r/LocalLLaMA/comments/1ssl1xh/qwen_36_27b_is_out/"]}' | jq '.[0].word_count'
+curl -s -X POST http://localhost:9161/scrape -H 'Content-Type: application/json' -d '{"urls":["https://www.reddit.com/r/LocalLLaMA/comments/1ssl1xh/qwen_36_27b_is_out/"]}' | jq '.[0].word_count'
 ```
 
 Logs: `docker compose logs -f scraper`. Stop: `docker compose down`.
@@ -88,7 +88,7 @@ Reddit URLs are handled automatically with a fallback chain: www.reddit.com → 
 - **m.reddit.com**: simpler HTML, fewer comments but more reliable
 - **old.reddit.com**: cleanest HTML structure but often blocked by bot detection
 
-Override the service URL (default `http://localhost:8765`) with `"DEEP_DIVE_URL"` in `env`.
+Override the service URL (default `http://localhost:9161`) with `"DEEP_DIVE_URL"` in `env`.
 
 ## Output format
 

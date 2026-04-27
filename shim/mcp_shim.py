@@ -26,7 +26,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("deep-dive-shim")
 
-SERVICE_URL = os.environ.get("DEEP_DIVE_URL", "http://localhost:8765")
+SERVICE_URL = os.environ.get("DEEP_DIVE_URL", "http://localhost:9161")
 
 mcp = FastMCP("deep-dive")
 

@@ -8,7 +8,7 @@ Personal-use "deep dive" scraper for local LLMs. Takes URLs, returns clean markd
 LM Studio
   │  spawns via stdio
   ▼
-mcp_shim.py (thin) ──HTTP──▶ localhost:8765
+mcp_shim.py (thin) ──HTTP──▶ localhost:9161
                                   │
                                   ▼
                             Docker container
@@ -29,7 +29,7 @@ The container owns all heavy deps (patched Chromium, extraction). The shim is in
 | `scraper.py` | Scraping logic. `_compact` (collapses whitespace/newlines so JSON-escaping doesn't eat tokens), `launch_browser`, `_scroll_page`, `_extract_reddit_comments`, `scrape_one`, `scrape_many`. Reddit-specific: scroll + network idle wait + include_comments=True + www→old.reddit→m.reddit fallback chain. |
 | `server.py` | FastAPI wrapper. Lifespan owns a shared browser. `POST /scrape`, `POST /screenshot`, `GET /health`. Returns compact JSON (no pretty-print). |
 | `Dockerfile` | Based on `mcr.microsoft.com/playwright/python` so Chromium's system libs are pre-installed. |
-| `docker-compose.yml` | Binds `127.0.0.1:8765`, sets `shm_size: 1gb`. |
+| `docker-compose.yml` | Binds `127.0.0.1:9161`, sets `shm_size: 1gb`. |
 | `shim/mcp_shim.py` | stdio MCP server. `_fmt()` converts dicts → flat key=value strings (no JSON, no brackets). Multi-line values escape newlines as literal \n. Forwards all tool calls to the container. |
 | `shim/pyproject.toml` | Shim deps: `mcp`, `httpx`. |
 | `pyproject.toml` | Host-side dev deps (for running `server.py` without Docker). |
@@ -45,8 +45,8 @@ docker compose up -d --build
 docker compose logs -f scraper
 
 # Smoke tests
-curl -s http://localhost:8765/health
-curl -s -X POST http://localhost:8765/scrape -H 'Content-Type: application/json' \
+curl -s http://localhost:9161/health
+curl -s -X POST http://localhost:9161/scrape -H 'Content-Type: application/json' \
   -d '{"urls":["https://example.com"]}' | jq .
 
 # Stop
@@ -74,7 +74,7 @@ _compact() strips whitespace so the shim doesn't waste tokens. All string fields
 
 **Errors are per-URL, never raise.** `scrape_one` catches everything and returns `{status: "error", error: ...}`. `scrape_many` uses `asyncio.gather(..., return_exceptions=True)`. Callers always get one result per input URL — preserve this contract.
 
-**Bind to localhost.** `docker-compose.yml` uses `"127.0.0.1:8765:8765"`. Don't change to `0.0.0.0` unless explicitly asked to serve other hosts.
+**Bind to localhost.** `docker-compose.yml` uses `"127.0.0.1:9161:8765"`. Don't change to `0.0.0.0` unless explicitly asked to serve other hosts.
 
 **Chromium in Docker needs `shm_size`.** The default 64 MB `/dev/shm` crashes Chromium under real pages. Keep `shm_size: 1gb`. Patchright passes `--no-sandbox` and `--disable-dev-shm-usage` automatically.
 

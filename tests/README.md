@@ -27,7 +27,7 @@ cd .. && docker compose up -d
 
 ## Environment variables
 
-- `SCRAPER_SERVER_URL` — API base URL (default: `http://localhost:8765`)
+- `SCRAPER_SERVER_URL` — API base URL (default: `http://localhost:9161`)
 
 ## Dependencies
 
