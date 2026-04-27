@@ -52,6 +52,7 @@ app = FastAPI(title="deep-dive scraper", lifespan=lifespan)
 class ScrapeRequest(BaseModel):
     urls: list[str] = Field(min_length=1)
     timeout_s: int = 30
+    language: str = "en"
 
 
 @app.post("/scrape")
@@ -73,10 +74,10 @@ async def screenshot(req: ScrapeRequest) -> list[dict]:
 
 @app.post("/scrape_youtube")
 async def scrape_youtube_endpoint(req: ScrapeRequest) -> list[dict]:
-    log.info("scrape_youtube %d url(s)", len(req.urls))
+    log.info("scrape_youtube %d url(s), language=%s", len(req.urls), req.language)
     results = []
     for u in req.urls:
-        r = await scrape_youtube(app.state.browser, u, req.timeout_s)
+        r = await scrape_youtube(app.state.browser, u, req.timeout_s, req.language)
         results.append(r)
     return results
 

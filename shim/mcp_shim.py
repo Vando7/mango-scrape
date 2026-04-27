@@ -144,11 +144,18 @@ async def deep_dive_screenshot(urls: list[str], timeout_s: int = 30) -> list[Ima
 
 
 @mcp.tool()
-async def get_youtube_transcript(urls: list[str], timeout_s: int = 30) -> str:
+async def get_youtube_transcript(urls: list[str], timeout_s: int = 30, language: str = "en") -> str:
     """Fetch YouTube video transcripts + metadata for one or more URLs.
 
     Forwards to the deep-dive-scraper Docker container (must be running).
     Returns flat key=value lines — no JSON, no brackets.
+
+    Args:
+        urls: List of YouTube video URLs.
+        timeout_s: Request timeout in seconds.
+        language: Language code(s) for transcript. Default 'en'.
+                  Supports single codes ('bg') or comma-separated ('en,bg').
+
     Fields: url, status, video_id, title, channel, upload_date, description,
             markdown_content, word_count, transcript_status, comment_count.
     """
@@ -159,7 +166,7 @@ async def get_youtube_transcript(urls: list[str], timeout_s: int = 30) -> str:
         async with httpx.AsyncClient(timeout=client_timeout) as client:
             r = await client.post(
                 f"{SERVICE_URL}/scrape_youtube",
-                json={"urls": urls, "timeout_s": timeout_s},
+                json={"urls": urls, "timeout_s": timeout_s, "language": language},
             )
             r.raise_for_status()
             results = r.json()

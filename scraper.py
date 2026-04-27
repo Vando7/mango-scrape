@@ -129,15 +129,26 @@ def _extract_video_id(url: str) -> str | None:
     return None
 
 
-async def _fetch_transcript(video_id: str, timeout_s: int) -> dict:
-    """Fetch transcript for a YouTube video ID."""
+
+
+async def _fetch_transcript(video_id: str, timeout_s: int, language: str = "en") -> dict:
+    """Fetch transcript for a YouTube video ID.
+
+    Args:
+        video_id: YouTube video ID string.
+        timeout_s: Timeout in seconds (unused by API but passed through).
+        language: Language code(s) to request. Can be single code like 'en'
+                  or comma-separated like 'en,bg' for multiple languages.
+
+    Returns dict with transcript text and metadata.
+    """
     try:
         yt_api = YouTubeTranscriptApi()
-        # Try English first, then auto-detect
-        try:
-            transcript_list = yt_api.fetch(video_id, languages=["en", "en-GB"])
-        except Exception:
-            transcript_list = yt_api.fetch(video_id)
+        # Parse language codes: accept single string or comma-separated list
+        langs = [l.strip() for l in language.split(",") if l.strip()]
+        if not langs:
+            langs = ["en"]
+        transcript_list = yt_api.fetch(video_id, languages=langs)
 
         # FetchedTranscript has .snippets (list of FetchedTranscriptSnippet with .text)
         text_parts = [s.text for s in transcript_list.snippets]
@@ -148,7 +159,7 @@ async def _fetch_transcript(video_id: str, timeout_s: int) -> dict:
             "video_id": video_id,
             "transcript": _compact(full_text),
             "word_count": len(full_text.split()) if full_text else 0,
-            "language": transcript_list.language if hasattr(transcript_list, 'language') else "unknown",
+            "language": transcript_list.language if hasattr(transcript_list, 'language') else langs[0],
         }
     except Exception as e:
         log.warning("transcript fetch failed for %s: %s", video_id, e)
@@ -298,14 +309,22 @@ async def _scrape_youtube_comments(browser: Browser, url: str, timeout_s: int) -
                 pass
 
 
-async def scrape_youtube(browser: Browser, url: str, timeout_s: int) -> dict:
-    """Scrape a YouTube video: transcript + comments."""
+async def scrape_youtube(browser: Browser, url: str, timeout_s: int, language: str = "en") -> dict:
+    """Scrape a YouTube video: transcript + comments.
+
+    Args:
+        browser: Patchright browser instance.
+        url: YouTube video URL.
+        timeout_s: Timeout in seconds.
+        language: Language code(s) for transcript. Default 'en'.
+                  Supports single codes ('bg') or comma-separated ('en,bg').
+    """
     video_id = _extract_video_id(url)
     if not video_id:
         return {"status": "error", "url": url, "error": "Could not extract video ID from URL"}
 
     # Fetch transcript (no browser needed)
-    transcript_result = await _fetch_transcript(video_id, timeout_s)
+    transcript_result = await _fetch_transcript(video_id, timeout_s, language)
 
     # Scrape comments (needs browser)
     comment_result = await _scrape_youtube_comments(browser, url, timeout_s)
