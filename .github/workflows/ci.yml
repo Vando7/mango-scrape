@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        uses: docker/setup-compose-action@v1
+        with:
+          compose-file: ./docker-compose.yml
+
+      - name: Build and start scraper
+        run: |
+          docker compose -f docker-compose.yml up -d --build
+          sleep 5
+          curl -sf http://localhost:8765/health || { docker compose logs; exit 1; }
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test deps
+        run: |
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run tests (fast)
+        env:
+          SCRAPER_SERVER_URL: http://localhost:8765
+        run: |
+          python -m pytest \
+            tests/test_health.py \
+            tests/test_errors.py \
+            tests/test_transcript.py \
+            -v --tb=short
+
+      - name: Run scrape tests (may be slow)
+        env:
+          SCRAPER_SERVER_URL: http://localhost:8765
+        run: |
+          python -m pytest \
+            tests/test_scrape.py \
+            -v --tb=short --timeout=120
+
+      - name: Run workspace tests
+        env:
+          SCRAPER_SERVER_URL: http://localhost:8765
+        run: |
+          python -m pytest \
+            tests/test_workspace.py \
+            -v --tb=short
+
+      - name: Stop container
+        if: always()
+        run: docker compose -f docker-compose.yml down
