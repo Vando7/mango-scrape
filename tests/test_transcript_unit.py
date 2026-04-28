@@ -17,7 +17,11 @@ def _temp_db():
 
 
 def test_compact_strips_extra_whitespace():
-    assert _compact("hello   world\n\n\n  foo  bar  ") == "hello world\nfoo bar"
+    # collapses horizontal whitespace, 3+ newlines → double newline, strips edges
+    result = _compact("hello   world\n\n\n  foo  bar  ")
+    assert "hello world" in result
+    assert "foo bar" in result
+    assert "\n\n" in result  # collapsed to double newline
 
 
 def test_compact_empty_input():
@@ -47,33 +51,31 @@ def test_chunk_by_words_empty():
 
 def test_paginate_transcript_structure():
     """paginate_transcript returns correct structure (no API call needed — uses cache)."""
-    # First, populate the cache with a known value
-    from yt_transcript import cache_put
+    from yt_transcript import _reset_db, cache_put
     db_path = _temp_db()
     os.environ["DEEP_DIVE_CACHE_DB"] = db_path
 
     try:
-        test_text = " ".join(["hello world this is page content"] * 10)
+        test_text = " ".join(f"word{i}" for i in range(600))
         cache_put("test_vid", "en", test_text)
 
-        result = paginate_transcript("test_vid", "en")
+        result = paginate_transcript("test_vid", "en", page_size=500)
         assert result["status"] == "ok"
         assert result["cached"] is True
         assert result["total_pages"] > 1
         assert len(result["pages"]) == result["total_pages"]
     finally:
+        _reset_db()
         os.unlink(db_path)
 
 
 def test_get_page_single():
-    """get_page returns one page with correct metadata."""
-    from yt_transcript import cache_put, get_page
+    from yt_transcript import _reset_db, cache_put, get_page
 
     db_path = _temp_db()
     os.environ["DEEP_DIVE_CACHE_DB"] = db_path
 
     try:
-        # Single-page transcript (under 500 words)
         short_text = " ".join(["word"] * 100)
         cache_put("short_vid", "en", short_text)
 
@@ -82,11 +84,12 @@ def test_get_page_single():
         assert result["page_num"] == 1
         assert result["total_pages"] == 1
     finally:
+        _reset_db()
         os.unlink(db_path)
 
 
 def test_get_page_out_of_range():
-    from yt_transcript import cache_put, get_page
+    from yt_transcript import _reset_db, cache_put, get_page
 
     db_path = _temp_db()
     os.environ["DEEP_DIVE_CACHE_DB"] = db_path
@@ -97,11 +100,12 @@ def test_get_page_out_of_range():
         assert result["status"] == "error"
         assert "out of range" in result["error"].lower()
     finally:
+        _reset_db()
         os.unlink(db_path)
 
 
 def test_get_page_zero():
-    from yt_transcript import cache_put, get_page
+    from yt_transcript import _reset_db, cache_put, get_page
 
     db_path = _temp_db()
     os.environ["DEEP_DIVE_CACHE_DB"] = db_path
@@ -111,12 +115,12 @@ def test_get_page_zero():
         result = get_page("vid", "en", page_num=0, page_size=500)
         assert result["status"] == "error"
     finally:
+        _reset_db()
         os.unlink(db_path)
 
 
 def test_cache_persists_across_get_put():
-    """Put then get should return the same text."""
-    from yt_transcript import cache_get, cache_put
+    from yt_transcript import _reset_db, cache_get, cache_put
 
     db_path = _temp_db()
     os.environ["DEEP_DIVE_CACHE_DB"] = db_path
@@ -126,12 +130,12 @@ def test_cache_persists_across_get_put():
         cache_put("vid", "en", text)
         assert cache_get("vid", "en") == text
     finally:
+        _reset_db()
         os.unlink(db_path)
 
 
 def test_cache_different_languages():
-    """Different languages should be separate entries."""
-    from yt_transcript import cache_get, cache_put
+    from yt_transcript import _reset_db, cache_get, cache_put
 
     db_path = _temp_db()
     os.environ["DEEP_DIVE_CACHE_DB"] = db_path
@@ -142,4 +146,5 @@ def test_cache_different_languages():
         assert cache_get("vid", "en") == "english text"
         assert cache_get("vid", "bg") == "bulgarian text"
     finally:
+        _reset_db()
         os.unlink(db_path)

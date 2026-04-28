@@ -8,7 +8,8 @@ import re
 import sqlite3
 from pathlib import Path
 
-from youtube_transcript_api import YouTubeTranscriptApi
+# Lazy import — only needed when actually fetching from YouTube API
+YouTubeTranscriptApi = None  # type: ignore
 
 log = logging.getLogger("deep-dive.yt")
 
@@ -16,6 +17,17 @@ log = logging.getLogger("deep-dive.yt")
 # ── SQLite cache ────────────────────────────────────────────────────────
 
 _CACHE_CONN: sqlite3.Connection | None = None
+
+
+def _reset_db() -> None:
+    """Close the cached DB connection (for testing)."""
+    global _CACHE_CONN
+    if _CACHE_CONN is not None:
+        try:
+            _CACHE_CONN.close()
+        except Exception:
+            pass
+        _CACHE_CONN = None
 
 
 def _get_cache_path() -> str:
@@ -82,6 +94,7 @@ def cache_put(video_id: str, language: str, raw_text: str) -> bool:
 def _fetch_raw(video_id: str, languages: list[str]) -> str | None:
     """Fetch transcript from YouTube API. Returns compacted text or None."""
     try:
+        from youtube_transcript_api import YouTubeTranscriptApi
         yt_api = YouTubeTranscriptApi()
         transcript_list = yt_api.fetch(video_id, languages=languages)
         full_text = " ".join(s.text for s in transcript_list.snippets)
