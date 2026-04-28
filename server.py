@@ -88,7 +88,7 @@ class TranscriptPageRequest(BaseModel):
     video_id: str = Field(min_length=1)
     language: str = "en"
     page_num: int = 1
-    page_size: int = 500
+    page_size: int = 5000
 
 
 @app.post("/transcript_page")

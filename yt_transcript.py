@@ -113,7 +113,7 @@ def _compact(text: str) -> str:
     return text
 
 
-def _chunk_by_words(text: str, chunk_size: int = 500) -> list[str]:
+def _chunk_by_words(text: str, chunk_size: int = 5000) -> list[str]:
     """Split text into word-based chunks."""
     words = text.split()
     if not words:
@@ -168,7 +168,7 @@ def get_transcript(video_id: str, language: str = "en") -> dict:
 
 
 def paginate_transcript(
-    video_id: str, language: str = "en", page_size: int = 2000
+    video_id: str, language: str = "en", page_size: int = 5000
 ) -> dict:
     """Fetch transcript and split into word-based pages.
 
@@ -195,7 +195,7 @@ def paginate_transcript(
 
 
 def get_page(
-    video_id: str, language: str = "en", page_num: int = 1, page_size: int = 2000
+    video_id: str, language: str = "en", page_num: int = 1, page_size: int = 5000
 ) -> dict:
     """Fetch a single transcript page by number (1-indexed).
 

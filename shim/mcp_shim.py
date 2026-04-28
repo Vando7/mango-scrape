@@ -150,7 +150,7 @@ async def get_youtube_transcript(urls: list[str], timeout_s: int = 30, language:
     Forwards to the deep-dive-scraper Docker container (must be running).
     Returns flat key=value lines — no JSON, no brackets.
 
-    Long transcripts are paginated (~500 words/page). The response includes
+    Long transcripts are paginated (~5k words/page). The response includes
     total_pages and page info. Use deep_dive_transcript_page for subsequent pages.
 
     Args:
