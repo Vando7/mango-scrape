@@ -14,48 +14,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Docker Compose
-        uses: docker/setup-compose-action@v1
-        with:
-          compose-file: ./docker-compose.yml
-
-      - name: Install curl
-        run: sudo apt-get update && sudo apt-get install -y curl
-
-      - name: Build and start scraper
-        run: |
-          docker compose -f docker-compose.yml up -d --build
-          sleep 5
-          for i in $(seq 1 10); do
-            if curl -sf http://localhost:8765/health > /dev/null 2>&1; then break; fi
-            echo "waiting for server... ($i)"
-            sleep 3
-          done
-          curl -sf http://localhost:8765/health || { docker compose logs; exit 1; }
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install test deps
+      - name: Install deps (pure Python tests, no Docker needed)
         run: |
-          pip install pytest pytest-asyncio httpx
+          pip install pytest pytest-asyncio youtube-transcript-api pydantic fastapi uvicorn patchright trafilatura httpx
 
-      - name: Run tests (fast)
-        env:
-          SCRAPER_SERVER_URL: http://localhost:8765
+      - name: Run unit tests (cache, pagination, compact — no browser/HTTP)
         run: |
           python -m pytest \
-            tests/test_health.py \
-            tests/test_errors.py \
-            tests/test_transcript.py \
+            tests/test_transcript_unit.py \
             -v --tb=short
 
-      # Note: test_scrape.py and test_screenshot.py hit real networks (Wikipedia, Reddit)
-      # which are unreliable in CI. They're kept for local dev but skipped here.
-      # Run them locally with: uv run pytest tests/test_scrape.py -v
-
-      - name: Stop container
-        if: always()
-        run: docker compose -f docker-compose.yml down
+      # Note: integration tests (scrape, screenshot, YouTube scraping) need Docker + Chromium.
+      # Run locally with: uv run pytest tests/ -v
