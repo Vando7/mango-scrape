@@ -26,10 +26,11 @@ The container owns all heavy deps (patched Chromium, extraction). The shim is in
 
 | Path | Role |
 |---|---|
-| `scraper.py` | Scraping logic. `_compact` (collapses whitespace/newlines so JSON-escaping doesn't eat tokens), `launch_browser`, `_scroll_page`, `_extract_reddit_comments`, `scrape_one`, `scrape_many`. Reddit-specific: scroll + network idle wait + include_comments=True + www→old.reddit→m.reddit fallback chain. |
-| `server.py` | FastAPI wrapper. Lifespan owns a shared browser. `POST /scrape`, `POST /screenshot`, `GET /health`. Returns compact JSON (no pretty-print). |
+| `scraper.py` | Scraping logic. `_compact`, `launch_browser`, `_scroll_page`, `_extract_reddit_comments`, `scrape_one`, `scrape_many`. YouTube: delegates transcript to `yt_transcript`. Reddit-specific: scroll + network idle wait + include_comments=True + www→old.reddit→m.reddit fallback chain. |
+| `server.py` | FastAPI wrapper. Lifespan owns a shared browser. `POST /scrape`, `POST /screenshot`, `GET /health`, `POST /scrape_youtube`, `POST /transcript_page`. Returns compact JSON. |
 | `Dockerfile` | Based on `mcr.microsoft.com/playwright/python` so Chromium's system libs are pre-installed. |
-| `docker-compose.yml` | Binds `127.0.0.1:9161`, sets `shm_size: 1gb`. |
+| `docker-compose.yml` | Binds `127.0.0.1:9161`, sets `shm_size: 1gb`. Mounts `./cache:/cache` for SQLite transcript cache persistence. |
+| `yt_transcript.py` | YouTube transcript fetching with SQLite cache and word-based pagination (500-word pages). Functions: `get_transcript`, `paginate_transcript`, `get_page`, `cache_get`, `cache_put`. |
 | `shim/mcp_shim.py` | stdio MCP server. `_fmt()` converts dicts → flat key=value strings (no JSON, no brackets). Multi-line values escape newlines as literal \n. Forwards all tool calls to the container. |
 | `shim/pyproject.toml` | Shim deps: `mcp`, `httpx`. |
 | `pyproject.toml` | Host-side dev deps (for running `server.py` without Docker). |
@@ -82,6 +83,8 @@ _compact() strips whitespace so the shim doesn't waste tokens. All string fields
 
 **Screenshots return MCP ImageContent.** `deep_dive_screenshot` in the shim forwards screenshot b64 from the container into `mcp.types.ImageContent(type="image", data=<b64>, mimeType="image/png")` blocks. These serialize directly as image content blocks with base64 data and mime type — the model sees actual images, not opaque strings.
 
+**YouTube transcript pagination.** Long transcripts are split into ~500-word pages. `get_youtube_transcript` returns page 1 + metadata (`total_pages`, `page_num`). The model is told to say "next" for more pages. Use `deep_dive_transcript_page(video_id, page_num)` to fetch subsequent pages. Transcripts are cached in SQLite (`/cache/yt_transcripts.db`) keyed by `(video_id, language)` — second call hits cache instantly.
+
 **Reddit scraping.** For `reddit.com` URLs (not old.reddit or m.reddit), scraper.py tries: **old.reddit first** (cleanest HTML, no heavy JS), then www, then m.reddit. `_inject_stealth()` runs before navigation to override `navigator.webdriver`, `window.chrome`, plugins, languages, and hardwareConcurrency — bypassing old.reddit's bot detection. Realistic headers (`Accept`, `Sec-Fetch-*`, etc.) are set via context-level `extra_http_headers`. On www.reddit.com it waits longer for network idle (`timeout_s * 500ms`) and scrolls the page to trigger lazy-loaded comments. trafilatura is called with `include_comments=True`. The `_extract_reddit_comments()` JS function attempts DOM extraction as a fallback, but Reddit's virtualized comment UI means only ~30-40 top comments are typically captured (thousands more require clicking "Load more" which triggers XHR API calls). m.reddit.com works but loads fewer comments.
 
 ## External references
@@ -94,7 +97,7 @@ _compact() strips whitespace so the shim doesn't waste tokens. All string fields
 
 ## Scope discipline
 
-No caching, no proxy rotation, no auth, no rate limiting, no PDF handling, no LAN exposure, no multi-user support. This is personal-use software. Do not volunteer "production-grade" additions. If the user asks for one, implement that one — not a framework around it.
+No proxy rotation, no auth, no rate limiting, no PDF handling, no LAN exposure, no multi-user support. This is personal-use software. YouTube transcripts are cached in SQLite (keyed by video_id + language) to avoid redundant API calls. Do not volunteer "production-grade" additions. If the user asks for one, implement that one — not a framework around it.
 
 ## House style
 

@@ -14,7 +14,8 @@ from typing import Any
 import httpx
 import trafilatura
 from patchright.async_api import Browser, async_playwright
-from youtube_transcript_api import YouTubeTranscriptApi
+
+from yt_transcript import get_page, paginate_transcript
 
 log = logging.getLogger("deep-dive.scraper")
 
@@ -129,45 +130,6 @@ def _extract_video_id(url: str) -> str | None:
     return None
 
 
-
-
-async def _fetch_transcript(video_id: str, timeout_s: int, language: str = "en") -> dict:
-    """Fetch transcript for a YouTube video ID.
-
-    Args:
-        video_id: YouTube video ID string.
-        timeout_s: Timeout in seconds (unused by API but passed through).
-        language: Language code(s) to request. Can be single code like 'en'
-                  or comma-separated like 'en,bg' for multiple languages.
-
-    Returns dict with transcript text and metadata.
-    """
-    try:
-        yt_api = YouTubeTranscriptApi()
-        # Parse language codes: accept single string or comma-separated list
-        langs = [l.strip() for l in language.split(",") if l.strip()]
-        if not langs:
-            langs = ["en"]
-        transcript_list = yt_api.fetch(video_id, languages=langs)
-
-        # FetchedTranscript has .snippets (list of FetchedTranscriptSnippet with .text)
-        text_parts = [s.text for s in transcript_list.snippets]
-        full_text = " ".join(text_parts)
-
-        return {
-            "status": "ok",
-            "video_id": video_id,
-            "transcript": _compact(full_text),
-            "word_count": len(full_text.split()) if full_text else 0,
-            "language": transcript_list.language if hasattr(transcript_list, 'language') else langs[0],
-        }
-    except Exception as e:
-        log.warning("transcript fetch failed for %s: %s", video_id, e)
-        return {
-            "status": "error",
-            "video_id": video_id,
-            "error": f"{type(e).__name__}: {e}",
-        }
 
 
 async def _scrape_youtube_comments(browser: Browser, url: str, timeout_s: int) -> dict:
@@ -323,16 +285,21 @@ async def scrape_youtube(browser: Browser, url: str, timeout_s: int, language: s
     if not video_id:
         return {"status": "error", "url": url, "error": "Could not extract video ID from URL"}
 
-    # Fetch transcript (no browser needed)
-    transcript_result = await _fetch_transcript(video_id, timeout_s, language)
+    # Fetch paginated transcript (cached, no browser needed)
+    transcript_result = paginate_transcript(video_id, language)
 
     # Scrape comments (needs browser)
     comment_result = await _scrape_youtube_comments(browser, url, timeout_s)
 
-    # Combine results
+    # Combine results — send first page + metadata so model can request more
     content_parts = []
     if transcript_result.get("status") == "ok":
-        content_parts.append(f"# Transcript\n\n{transcript_result['transcript']}")
+        total_pages = transcript_result.get("total_pages", 1)
+        cached = transcript_result.get("cached", False)
+        meta_tag = " [cached]" if cached else ""
+        page_info = f"\n---\nTranscript: {total_pages} page(s){meta_tag}. Page 1 of {total_pages}. Say 'next' for more pages."
+        first_page = transcript_result.get("pages", [""])[0] if transcript_result.get("pages") else ""
+        content_parts.append(f"# Transcript{page_info}\n\n{first_page}")
     else:
         content_parts.append(f"# Transcript Error: {transcript_result.get('error', 'unknown')}")
 

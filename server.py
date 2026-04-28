@@ -24,6 +24,8 @@ from scraper import (
     screenshot_many,
 )
 
+from yt_transcript import get_page
+
 logging.basicConfig(
     stream=sys.stderr,
     level=logging.INFO,
@@ -80,6 +82,24 @@ async def scrape_youtube_endpoint(req: ScrapeRequest) -> list[dict]:
         r = await scrape_youtube(app.state.browser, u, req.timeout_s, req.language)
         results.append(r)
     return results
+
+
+class TranscriptPageRequest(BaseModel):
+    video_id: str = Field(min_length=1)
+    language: str = "en"
+    page_num: int = 1
+    page_size: int = 500
+
+
+@app.post("/transcript_page")
+async def transcript_page_endpoint(req: TranscriptPageRequest) -> dict:
+    log.info("transcript_page %s, lang=%s, page=%d", req.video_id, req.language, req.page_num)
+    return get_page(
+        req.video_id,
+        language=req.language,
+        page_num=req.page_num,
+        page_size=req.page_size,
+    )
 
 
 WORKSPACE_DIR = os.environ.get("DEEP_DIVE_WORKSPACE", "/workspace")

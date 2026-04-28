@@ -11,5 +11,6 @@ services:
     # Persistent workspace for downloads, cloned repos, and file operations
     volumes:
       - ./workspace:/workspace
+      - ./cache:/cache
     environment:
       - DEEP_DIVE_WORKSPACE=/workspace

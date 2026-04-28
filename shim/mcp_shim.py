@@ -150,6 +150,9 @@ async def get_youtube_transcript(urls: list[str], timeout_s: int = 30, language:
     Forwards to the deep-dive-scraper Docker container (must be running).
     Returns flat key=value lines — no JSON, no brackets.
 
+    Long transcripts are paginated (~500 words/page). The response includes
+    total_pages and page info. Use deep_dive_transcript_page for subsequent pages.
+
     Args:
         urls: List of YouTube video URLs.
         timeout_s: Request timeout in seconds.
@@ -281,6 +284,41 @@ async def cat_file(path: str) -> str:
     except httpx.HTTPStatusError as e:
         log.warning("cat error: %s", e)
         return _fmt({"status": "error", "path": path, "error": f"{e.response.status_code}: {e.response.text[:200]}"})
+
+
+@mcp.tool()
+async def deep_dive_transcript_page(
+    video_id: str,
+    page_num: int = 1,
+    language: str = "en",
+) -> str:
+    """Fetch a single transcript page for a YouTube video.
+
+    Use after get_youtube_transcript to retrieve subsequent pages of long transcripts.
+    Returns flat key=value lines with status, video_id, language, cached,
+    total_pages, page_num, page_size, transcript.
+
+    Args:
+        video_id: YouTube video ID (11-char string).
+        page_num: Page number (1-indexed). Default 1.
+        language: Language code. Default 'en'.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                f"{SERVICE_URL}/transcript_page",
+                json={"video_id": video_id, "page_num": page_num, "language": language},
+            )
+            r.raise_for_status()
+            return _fmt(r.json())
+    except httpx.ConnectError as e:
+        log.warning("scraper unreachable: %s", e)
+        return _fmt({"status": "error", "video_id": video_id, "page_num": page_num,
+                     "error": f"service unreachable at {SERVICE_URL}"})
+    except httpx.HTTPStatusError as e:
+        log.warning("transcript_page error: %s", e)
+        return _fmt({"status": "error", "video_id": video_id, "page_num": page_num,
+                     "error": f"{e.response.status_code}: {e.response.text[:200]}"})
 
 
 if __name__ == "__main__":

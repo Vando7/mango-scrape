@@ -25,7 +25,7 @@ RUN pip install --no-cache-dir \
 # Download patchright's patched Chromium (separate binary from the stock playwright one).
 RUN patchright install chromium
 
-COPY scraper.py server.py ./
+COPY scraper.py server.py yt_transcript.py ./
 
 EXPOSE 8765
 
