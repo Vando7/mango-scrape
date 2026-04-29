@@ -102,7 +102,7 @@ async def transcript_page_endpoint(req: TranscriptPageRequest) -> dict:
     )
 
 
-WORKSPACE_DIR = os.environ.get("DEEP_DIVE_WORKSPACE", "/workspace")
+WORKSPACE_DIR = os.environ.get("DEEP_DIVE_WORKSPACE", r"C:\software\searchmcp\scraper\scrape\workspace")
 
 
 class DownloadRequest(BaseModel):

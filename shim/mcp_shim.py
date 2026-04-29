@@ -1,7 +1,7 @@
-"""Thin stdio MCP shim that forwards deep_dive calls to the Docker HTTP service.
+"""Thin stdio MCP shim that forwards deep_dive calls to the scraper HTTP service.
 
-LM Studio (on Windows) spawns this via stdio; it HTTP-POSTs into the
-deep-dive-scraper container running on WSL.
+LM Studio (on Windows) spawns this via stdio. If the scraper server isn't already
+running, the shim auto-starts it locally on port 8765.
 
 All tool responses are flat key=value strings — no JSON, no brackets,
 no indentation. Multi-line values have internal newlines escaped as \n.
@@ -9,11 +9,14 @@ no indentation. Multi-line values have internal newlines escaped as \n.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import os
+import subprocess
 import sys
 from datetime import date
+from pathlib import Path
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -26,7 +29,11 @@ logging.basicConfig(
 )
 log = logging.getLogger("deep-dive-shim")
 
-SERVICE_URL = os.environ.get("DEEP_DIVE_URL", "http://localhost:9161")
+SERVICE_URL = os.environ.get("DEEP_DIVE_URL", "http://localhost:8765")
+
+SCRAPER_PORT = 8765
+SERVER_SCRIPT = str(Path(__file__).resolve().parent.parent / "server.py")
+VENV_PYTHON = str(Path(__file__).resolve().parent.parent / ".venv" / "Scripts" / "python.exe")
 
 mcp = FastMCP("deep-dive")
 
@@ -60,8 +67,7 @@ async def get_date() -> str:
 async def deep_dive(urls: list[str], timeout_s: int = 30) -> str:
     """Fetch one or more URLs and return clean markdown + metadata for each.
 
-    Forwards to the deep-dive-scraper Docker container (must be running).
-    Returns flat key=value lines — no JSON, no brackets.
+    Auto-starts the scraper server if not already running. Returns flat key=value lines.
     """
     if not urls:
         return ""
@@ -80,7 +86,7 @@ async def deep_dive(urls: list[str], timeout_s: int = 30) -> str:
             {
                 "url": u,
                 "status": "error",
-                "error": f"scraper service unreachable at {SERVICE_URL} — is `docker compose up` running?",
+                "error": f"scraper service unreachable at {SERVICE_URL}",
             }
             for u in urls
         ]
@@ -103,8 +109,7 @@ async def deep_dive(urls: list[str], timeout_s: int = 30) -> str:
 async def deep_dive_screenshot(urls: list[str], timeout_s: int = 30) -> list[ImageContent]:
     """Fetch one or more URLs and return a full-page screenshot for each.
 
-    Forwards to the deep-dive-scraper Docker container (must be running).
-    Returns ImageContent blocks — the model sees actual images, not base64 strings.
+    Auto-starts the scraper server if not already running. Returns ImageContent blocks.
     """
     if not urls:
         return []
@@ -147,8 +152,7 @@ async def deep_dive_screenshot(urls: list[str], timeout_s: int = 30) -> list[Ima
 async def get_youtube_transcript(urls: list[str], timeout_s: int = 30, language: str = "en") -> str:
     """Fetch YouTube video transcripts + metadata for one or more URLs.
 
-    Forwards to the deep-dive-scraper Docker container (must be running).
-    Returns flat key=value lines — no JSON, no brackets.
+    Auto-starts the scraper server if not already running. Returns flat key=value lines.
 
     Long transcripts are paginated (~5k words/page). The response includes
     total_pages and page info. Use deep_dive_transcript_page for subsequent pages.
@@ -179,7 +183,7 @@ async def get_youtube_transcript(urls: list[str], timeout_s: int = 30, language:
             {
                 "url": u,
                 "status": "error",
-                "error": f"scraper service unreachable at {SERVICE_URL} — is `docker compose up` running?",
+                "error": f"scraper service unreachable at {SERVICE_URL}",
             }
             for u in urls
         ]
@@ -321,5 +325,47 @@ async def deep_dive_transcript_page(
                      "error": f"{e.response.status_code}: {e.response.text[:200]}"})
 
 
+async def _server_healthy(url: str) -> bool:
+    """Check if the scraper server responds to /health."""
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            r = await client.get(f"{url}/health")
+            return r.status_code == 200
+    except Exception:
+        return False
+
+
+async def _ensure_server():
+    """Start the scraper server if it's not already running."""
+    if await _server_healthy(SERVICE_URL):
+        log.info("scraper server already running at %s", SERVICE_URL)
+        return
+
+    log.warning("scraper server not running — starting locally on port %d", SCRAPER_PORT)
+
+    # Find python: prefer .venv, fall back to system python
+    py = VENV_PYTHON if os.path.exists(VENV_PYTHON) else "python"
+    work_dir = str(Path(__file__).resolve().parent.parent)
+
+    proc = subprocess.Popen(
+        [py, "-m", "uvicorn", "server:app", f"--port={SCRAPER_PORT}"],
+        cwd=work_dir,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+
+    # Wait up to 30s for the server to come up
+    for _ in range(60):
+        if await _server_healthy(SERVICE_URL):
+            log.info("scraper server started (pid %d)", proc.pid)
+            return
+        await asyncio.sleep(0.5)
+
+    # If we get here, the server failed to start — don't block the shim.
+    log.error("failed to start scraper server (exit code %s)", proc.returncode)
+    # Leave SERVICE_URL as-is so tool calls will return error messages instead of hanging.
+
+
 if __name__ == "__main__":
+    asyncio.run(_ensure_server())
     mcp.run(transport="stdio")
