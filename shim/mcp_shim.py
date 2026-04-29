@@ -4,7 +4,7 @@ LM Studio (on Windows) spawns this via stdio. If the scraper server isn't alread
 running, the shim auto-starts it locally on port 8765.
 
 All tool responses are flat key=value strings — no JSON, no brackets,
-no indentation. Multi-line values have internal newlines escaped as \n.
+no indentation. Multi-line values keep real newlines.
 """
 
 from __future__ import annotations
@@ -41,14 +41,12 @@ mcp = FastMCP("deep-dive")
 def _fmt(r: dict) -> str:
     """Format a single URL result as flat key=value lines.
 
-    Multi-line values (markdown_content, description, transcript) have
-    internal newlines escaped as literal \\n so the model sees one line per field.
+    Multi-line values keep real newlines — no escape artifacts for the model.
     """
     parts = []
     for k, v in r.items():
         if isinstance(v, str):
-            # Escape backslashes first, then real newlines → literal \n
-            val = v.replace("\\", "\\\\").replace("\n", "\\n")
+            val = v.replace("\\", "\\\\")
             parts.append(f"{k}={val}")
         elif isinstance(v, (int, float)):
             parts.append(f"{k}={v}")
@@ -272,7 +270,6 @@ async def cat_file(path: str) -> str:
     """Read and display the text content of a file in the workspace.
 
     Returns flat key=value lines with status, path, filename, size, content.
-    Content is multi-line; internal newlines escaped as \\n.
     """
     try:
         async with httpx.AsyncClient(timeout=30) as client:
