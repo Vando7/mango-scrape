@@ -5,10 +5,13 @@ Runs inside the Docker container. The MCP shim on Windows talks to it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
@@ -27,8 +30,32 @@ from scraper import (
     scrape_youtube,
     screenshot_many,
 )
-
 from yt_transcript import get_page
+
+# Idle shutdown: shut down after 5 minutes with no requests (overridable via env var)
+IDLE_TIMEOUT_S = int(os.environ.get("DEEP_DIVE_IDLE_TIMEOUT", "300"))
+last_request_time: float = time.time()
+
+
+async def _idle_watcher(app: FastAPI):
+    """Poll for idle timeout and shut down the server."""
+    while True:
+        await asyncio.sleep(10)
+        if time.time() - last_request_time >= IDLE_TIMEOUT_S:
+            log.info("idle timeout reached (%d s), shutting down", IDLE_TIMEOUT_S)
+            # Clean up browser before exit
+            browser = app.state.browser
+            pw = app.state.pw
+            try:
+                await browser.close()
+            except Exception:
+                pass
+            try:
+                await pw.stop()
+            except Exception:
+                pass
+            os._exit(0)
+
 
 logging.basicConfig(
     stream=sys.stderr,
@@ -40,6 +67,15 @@ log = logging.getLogger("deep-dive")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Write PID file so the shim can check without scanning ports
+    script_dir = Path(__file__).parent
+    pid_file = script_dir / "server.pid"
+    pid_file.write_text(str(os.getpid()))
+    log.info("pid %d written to %s", os.getpid(), pid_file)
+
+    # Start idle timeout watcher
+    app.state.idle_task = asyncio.create_task(_idle_watcher(app))
+
     log.info("launching patchright browser")
     app.state.browser, app.state.pw = await launch_browser()
     try:
@@ -50,9 +86,23 @@ async def lifespan(app: FastAPI):
             await app.state.browser.close()
         finally:
             await app.state.pw.stop()
+        # Clean up PID file only on normal shutdown (idle watcher kills with os._exit)
+        try:
+            pid_file.unlink()
+        except FileNotFoundError:
+            pass
 
 
 app = FastAPI(title="deep-dive scraper", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def track_last_request(request, call_next):
+    """Reset idle timer on every request."""
+    global last_request_time
+    last_request_time = time.time()
+    response = await call_next(request)
+    return response
 
 
 class ScrapeRequest(BaseModel):
@@ -97,7 +147,9 @@ class TranscriptPageRequest(BaseModel):
 
 @app.post("/transcript_page")
 async def transcript_page_endpoint(req: TranscriptPageRequest) -> dict:
-    log.info("transcript_page %s, lang=%s, page=%d", req.video_id, req.language, req.page_num)
+    log.info(
+        "transcript_page %s, lang=%s, page=%d", req.video_id, req.language, req.page_num
+    )
     return get_page(
         req.video_id,
         language=req.language,
@@ -106,7 +158,9 @@ async def transcript_page_endpoint(req: TranscriptPageRequest) -> dict:
     )
 
 
-WORKSPACE_DIR = os.environ.get("DEEP_DIVE_WORKSPACE", r"C:\software\searchmcp\scraper\scrape\workspace")
+WORKSPACE_DIR = os.environ.get(
+    "DEEP_DIVE_WORKSPACE", r"C:\software\searchmcp\scraper\scrape\workspace"
+)
 
 
 class DownloadRequest(BaseModel):
@@ -187,7 +241,12 @@ async def search(req: SearchRequest) -> dict:
                 )
             if results:
                 log.info("brave search returned %d results", len(results))
-                return {"status": "ok", "query": req.query, "num_results": len(results), "results": results}
+                return {
+                    "status": "ok",
+                    "query": req.query,
+                    "num_results": len(results),
+                    "results": results,
+                }
         except Exception as e:
             log.warning("brave search failed: %s", e)
 
