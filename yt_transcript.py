@@ -124,6 +124,9 @@ def _chunk_by_words(text: str, chunk_size: int = 5000) -> list[str]:
     return chunks
 
 
+_FALLBACK_LANGS = ["en", "es", "de", "fr", "pt", "ru", "ja", "ko", "zh-Hans", "bg"]
+
+
 def get_transcript(video_id: str, language: str = "en") -> dict:
     """Fetch transcript with cache lookup.
 
@@ -133,7 +136,7 @@ def get_transcript(video_id: str, language: str = "en") -> dict:
     if not langs:
         langs = ["en"]
 
-    # Try cache first
+    # Try cache first (only exact requested lang)
     cached = cache_get(video_id, language)
     if cached is not None:
         log.info("cache hit for %s/%s", video_id, language)
@@ -146,24 +149,32 @@ def get_transcript(video_id: str, language: str = "en") -> dict:
             "language": langs[0],
         }
 
-    # Fetch from API
-    raw = _fetch_raw(video_id, langs)
+    # Fetch from API — try requested langs, then fallbacks
+    raw = None
+    used_lang = None
+    for candidate in langs + _FALLBACK_LANGS:
+        log.info("trying transcript lang=%s", candidate)
+        raw = _fetch_raw(video_id, [candidate])
+        if raw is not None:
+            used_lang = candidate
+            break
+
     if raw is None:
         return {
             "status": "error",
             "video_id": video_id,
-            "error": f"transcript fetch failed for {langs}",
+            "error": f"no transcript found for {langs} or fallbacks",
         }
 
-    cache_put(video_id, language, raw)
-    log.info("fetched & cached %s/%s (%d words)", video_id, language, len(raw.split()))
+    cache_put(video_id, used_lang, raw)
+    log.info("fetched & cached %s/%s (%d words)", video_id, used_lang, len(raw.split()))
     return {
         "status": "ok",
         "video_id": video_id,
         "transcript": raw,
         "cached": False,
         "word_count": len(raw.split()) if raw else 0,
-        "language": langs[0],
+        "language": used_lang,
     }
 
 
