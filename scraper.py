@@ -46,6 +46,35 @@ async def _scroll_page(page, scroll_count: int = 10, delay_ms: int = 500):
             break
 
 
+async def _extract_links(page) -> list[dict]:
+    """Extract all meaningful links from the page. General-purpose, no site-specific logic."""
+    try:
+        links = await page.evaluate("""
+            (() => {
+                const results = [];
+                document.querySelectorAll('a[href]').forEach(a => {
+                    const text = (a.innerText || '').trim();
+                    const url = a.href;
+                    if (!text || !url || !url.startsWith('http')) return;
+                    results.push({ text: text.substring(0, 200), url: url });
+                });
+                return results;
+            })()
+        """)
+        # Filter: skip short URLs and navigation keywords
+        nav_words = {'back', 'next', 'read more', 'continue', 'see more', 'more', 'click here', 'learn more'}
+        out = []
+        for item in (links or []):
+            t = item['text'].lower()
+            if len(item['url']) < 20: continue
+            if t in nav_words: continue
+            out.append(item)
+        return out
+    except Exception as e:
+        log.warning("link extraction failed: %s", e)
+        return []
+
+
 async def _extract_reddit_comments(page) -> str:
     """Extract all visible comment text from a Reddit page via JS selectors."""
     try:
@@ -511,6 +540,9 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
                 if "reddit.com" in attempt_url:
                     reddit_comments_html = await _extract_reddit_comments(page)
                     log.info("reddit comments extracted: %d chars", len(reddit_comments_html or ""))
+                # Extract links for general-purpose browsing
+                page_links = await _extract_links(page)
+                log.info("extracted %d links", len(page_links))
                 break
         except Exception as e:
             last_error = f"{type(e).__name__}: {e}"
@@ -559,6 +591,7 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
         "description": _compact(getattr(meta, "description", None) or ""),
         "markdown_content": content,
         "word_count": len(content.split()) if content else 0,
+        "links": page_links,
     }
 
 
