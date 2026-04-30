@@ -10,7 +10,11 @@ import os
 import sys
 from contextlib import asynccontextmanager
 
+import httpx
+from dotenv import load_dotenv
 from fastapi import FastAPI
+
+load_dotenv()
 from pydantic import BaseModel, Field
 
 from scraper import (
@@ -143,3 +147,48 @@ class CatRequest(BaseModel):
 async def cat_endpoint(req: CatRequest) -> dict:
     log.info("cat %s", req.path)
     return cat_file(req.path, WORKSPACE_DIR)
+
+
+BRAVE_API_KEY = os.environ.get("BRAVE_API_KEY", "")
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=400)
+    num_results: int = Field(default=5, ge=1, le=20)
+    language: str = ""
+
+
+@app.post("/search")
+async def search(req: SearchRequest) -> dict:
+    log.info("search %s (num=%d)", req.query, req.num_results)
+
+    # Try Brave first if API key is set
+    if BRAVE_API_KEY:
+        try:
+            async with httpx.AsyncClient(
+                timeout=15,
+                headers={"X-Subscription-Token": BRAVE_API_KEY},
+            ) as client:
+                r = await client.get(
+                    "https://api.search.brave.com/res/v1/web/search",
+                    params={"q": req.query, "count": min(req.num_results, 20)}
+                    | ({"search_lang": req.language} if req.language else {}),
+                )
+                r.raise_for_status()
+            data = r.json()
+            results = []
+            for item in (data.get("web", {}).get("results") or [])[: req.num_results]:
+                results.append(
+                    {
+                        "url": item.get("url", ""),
+                        "title": item.get("title", ""),
+                        "snippet": item.get("description", ""),
+                    }
+                )
+            if results:
+                log.info("brave search returned %d results", len(results))
+                return {"status": "ok", "query": req.query, "num_results": len(results), "results": results}
+        except Exception as e:
+            log.warning("brave search failed: %s", e)
+
+    return {"status": "error", "query": req.query, "error": "brave search unavailable"}

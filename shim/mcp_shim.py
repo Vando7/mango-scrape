@@ -288,6 +288,44 @@ async def cat_file(path: str) -> str:
 
 
 @mcp.tool()
+async def web_search(query: str, num_results: int = 5, language: str = "") -> str:
+    """Search the web via Brave Search and return results as flat key=value lines.
+
+    Each result is separated by a --- divider. Fields per result:
+        url, title, snippet.
+    Also returns status, query, num_results at the top.
+
+    Args:
+        query: Search query string (max 400 chars).
+        num_results: Number of results to return (1-20). Default 5.
+        language: Language code (e.g. 'en', 'de'). Empty for default.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                f"{SERVICE_URL}/search",
+                json={"query": query, "num_results": num_results, "language": language},
+            )
+            r.raise_for_status()
+            data = r.json()
+    except httpx.ConnectError as e:
+        log.warning("scraper unreachable: %s", e)
+        return _fmt({"status": "error", "query": query, "error": f"service unreachable at {SERVICE_URL}"})
+    except httpx.HTTPStatusError as e:
+        log.warning("search error: %s", e)
+        return _fmt({"status": "error", "query": query, "error": f"{e.response.status_code}: {e.response.text[:200]}"})
+
+    if data.get("status") == "ok":
+        parts = [f"status={data['status']}", f"query={data['query']}", f"num_results={data['num_results']}"]
+        for i, r in enumerate(data.get("results", [])):
+            parts.append(f"---")
+            parts.extend([f"url={r['url']}", f"title={r['title']}", f"snippet={r['snippet']}"])
+        return "\n".join(parts)
+    else:
+        return _fmt(data)
+
+
+@mcp.tool()
 async def deep_dive_transcript_page(
     video_id: str,
     page_num: int = 1,
