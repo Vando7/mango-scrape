@@ -62,7 +62,7 @@ async def _extract_links(page) -> list[dict]:
             })()
         """)
         # Filter: skip short URLs and navigation keywords
-        nav_words = {'back', 'next', 'read more', 'continue', 'see more', 'more', 'click here', 'learn more'}
+        nav_words = {'back', 'next', 'prev', 'first', 'last', 'read more', 'continue', 'see more', 'more', 'click here', 'learn more', 'new', 'past', 'ask', 'show', 'jobs', 'submit', 'login', 'logout', 'about', 'contact', 'help', 'search', 'menu', 'toggle', 'settings', 'hide', 'discuss', 'comments', 'profile'}
         out = []
         for item in (links or []):
             t = item['text'].lower()
