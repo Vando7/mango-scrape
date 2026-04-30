@@ -14,3 +14,4 @@ services:
       - ./cache:/cache
     environment:
       - DEEP_DIVE_WORKSPACE=/workspace
+      - DEEP_DIVE_CACHE_DB=/cache/yt_transcripts.db

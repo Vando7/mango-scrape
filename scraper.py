@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -36,11 +37,11 @@ async def launch_browser() -> tuple[Browser, Any]:
     return browser, pw
 
 
-async def _scroll_page(page, scroll_count: int = 10, delay_ms: int = 500):
+async def _scroll_page(page, scroll_count: int = 10, delay_ms: int = 500, scroll_px: int = 1500):
     """Scroll down the page multiple times to trigger lazy-loaded content."""
     for i in range(scroll_count):
         try:
-            await page.evaluate(f"window.scrollBy(0, {delay_ms * 3})")
+            await page.evaluate(f"window.scrollBy(0, {scroll_px})")
             await asyncio.sleep(delay_ms / 1000)
         except Exception:
             break
@@ -81,24 +82,6 @@ async def _extract_reddit_comments(page) -> str:
         comments = await page.evaluate("""
             (() => {
                 const results = [];
-
-                // Strategy 1: Extract from embedded JSON data (Reddit's internal state)
-                let jsonComments = null;
-                try {
-                    // Try to find __NEXT_DATA__ or similar embedded JSON
-                    const scripts = document.querySelectorAll('script[type="application/json"]');
-                    for (const script of scripts) {
-                        try {
-                            const data = JSON.parse(script.textContent);
-                            if (data?.payload?.graphql?.data?.comments?.nodes) {
-                                jsonComments = data.payload.graphql.data.comments.nodes;
-                                break;
-                            }
-                        } catch(e) {}
-                    }
-                } catch(e) {}
-
-                // Strategy 2: Extract from DOM elements
                 const selectors = [
                     '.usertext',
                     '[data-testid="comment-ui"]',
@@ -443,7 +426,7 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
     """
     # Reddit-specific fallback chain: old.reddit first (cleanest HTML), then www, then m.reddit
     urls_to_try = [url]
-    if "reddit.com" in url and not url.startswith("old.reddit") and not url.startswith("m.reddit"):
+    if "reddit.com" in url and "old.reddit.com" not in url and "m.reddit.com" not in url:
         base = url.split("?")[0].rstrip("/")
         # Extract path after domain (e.g. /r/python)
         parts = base.split("/", 3)  # ["https:", "", "www.reddit.com", "/r/python"]
@@ -457,26 +440,18 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
     context: Any | None = None
     html: str | None = None
     last_error: str | None = None
+    reddit_comments_html: str | None = None
+    page_links: list[dict] = []
 
     for attempt_url in urls_to_try:
         is_reddit = "reddit.com" in attempt_url
         context = await _make_context(browser, is_reddit=is_reddit)
         page = await context.new_page()
-        reddit_comments_html: str | None = None
-        html: str | None = None
-        last_error: str | None = None
         try:
             log.info("scrape attempt: %s", attempt_url)
             # Inject stealth scripts for bot detection bypass (must run before navigation)
-            is_reddit = "reddit.com" in attempt_url
             if is_reddit:
                 await _inject_stealth(page)
-            # Intercept API responses for Reddit
-            api_responses: list[str] = []
-            if is_reddit:
-                page.on("response", lambda resp: (
-                    lambda url: (api_responses.append(url) if "graphql" in url or "/comments.json" in url else None)
-                )(resp.url))
 
             await page.goto(attempt_url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
             # For Reddit, wait longer for JS-rendered content
@@ -535,7 +510,7 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
                     await asyncio.sleep(0.5)
             html = await page.content()
             if html and len(html) > 1000:
-                log.info("scrape succeeded via %s (%d bytes, %d api calls intercepted)", attempt_url, len(html), len(api_responses))
+                log.info("scrape succeeded via %s (%d bytes)", attempt_url, len(html))
                 # Extract Reddit comments while page is still open
                 if "reddit.com" in attempt_url:
                     reddit_comments_html = await _extract_reddit_comments(page)
@@ -582,6 +557,7 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
         content = f"{content}\n\n--- Reddit Comments (DOM Extracted) ---\n\n{_compact(reddit_comments_html)}"
     content = _compact(content)
 
+    links_flat = "\n".join(f"{l['text']} | {l['url']}" for l in page_links)
     return {
         "url": url,
         "status": "ok",
@@ -591,7 +567,7 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
         "description": _compact(getattr(meta, "description", None) or ""),
         "markdown_content": content,
         "word_count": len(content.split()) if content else 0,
-        "links": page_links,
+        "links": links_flat,
     }
 
 
@@ -667,6 +643,7 @@ async def download_file(url: str, workspace_dir: str) -> dict:
     """
     ws = Path(workspace_dir)
     ws.mkdir(parents=True, exist_ok=True)
+    ws_resolved = ws.resolve()
 
     # Derive filename from URL path
     parsed = url.split("?")[0]  # strip query params
@@ -674,15 +651,32 @@ async def download_file(url: str, workspace_dir: str) -> dict:
     if not fname or fname.endswith("/"):
         fname = "downloaded_file"
 
-    dest = ws / fname
+    dest = (ws / fname).resolve()
+    if not dest.is_relative_to(ws_resolved):
+        return {"status": "error", "url": url, "error": "filename escapes workspace"}
+    max_mb = int(os.environ.get("DEEP_DIVE_MAX_DOWNLOAD_MB", "100"))
+    max_bytes = max_mb * 1024 * 1024
     try:
         async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.get(url, follow_redirects=True)
-            r.raise_for_status()
-            data = r.content
-            dest.write_bytes(data)
-            size = len(data)
-            # Guess content type from extension
+            async with client.stream("GET", url, follow_redirects=True) as r:
+                r.raise_for_status()
+                size = 0
+                with dest.open("wb") as f:
+                    async for chunk in r.aiter_bytes(chunk_size=64 * 1024):
+                        size += len(chunk)
+                        if size > max_bytes:
+                            f.close()
+                            try:
+                                dest.unlink()
+                            except FileNotFoundError:
+                                pass
+                            return {
+                                "status": "error",
+                                "url": url,
+                                "error": f"exceeds max size ({max_mb} MB)",
+                            }
+                        f.write(chunk)
+                content_type = r.headers.get("Content-Type", "application/octet-stream")
             ext = Path(fname).suffix.lstrip(".").lower()
             mime_map = {
                 "txt": "text/plain",
@@ -698,7 +692,7 @@ async def download_file(url: str, workspace_dir: str) -> dict:
                 "ts": "text/typescript",
                 "css": "text/css",
             }
-            mime = mime_map.get(ext, r.headers.get("Content-Type", "application/octet-stream"))
+            mime = mime_map.get(ext, content_type)
             return {
                 "status": "ok",
                 "path": str(dest),
@@ -727,7 +721,7 @@ def clone_repo(git_url: str, workspace_dir: str) -> dict:
     dest = ws / repo_name
     try:
         result = subprocess.run(
-            ["git", "clone", git_url, str(dest)],
+            ["git", "clone", "--", git_url, str(dest)],
             capture_output=True,
             text=True,
             timeout=120,
@@ -757,7 +751,11 @@ def list_files(path: str, workspace_dir: str) -> dict:
     Returns a tree-like listing of files and directories.
     """
     ws = Path(workspace_dir)
+    ws_resolved = ws.resolve()
     target = (ws / path).resolve()
+
+    if not target.is_relative_to(ws_resolved):
+        return {"status": "error", "path": path, "error": "path escapes workspace"}
 
     if not target.is_dir():
         return {"status": "error", "path": path, "error": f"Not a directory: {target}"}
@@ -781,7 +779,11 @@ def list_files(path: str, workspace_dir: str) -> dict:
 def cat_file(path: str, workspace_dir: str) -> dict:
     """Read and return the text content of a file in the workspace directory."""
     ws = Path(workspace_dir)
+    ws_resolved = ws.resolve()
     target = (ws / path).resolve()
+
+    if not target.is_relative_to(ws_resolved):
+        return {"status": "error", "path": path, "error": "path escapes workspace"}
 
     if not target.is_file():
         return {"status": "error", "path": path, "error": f"Not a file: {target}"}
@@ -798,3 +800,114 @@ def cat_file(path: str, workspace_dir: str) -> dict:
     except Exception as e:
         log.warning("cat failed: %s -> %s", path, e)
         return {"status": "error", "path": path, "error": f"{type(e).__name__}: {e}"}
+
+
+async def hn_search(
+    query: str,
+    num_results: int = 10,
+    tags: str = "story",
+    sort_by_date: bool = False,
+) -> dict:
+    """Search Hacker News via the Algolia API. No auth, free."""
+    base = (
+        "https://hn.algolia.com/api/v1/search_by_date"
+        if sort_by_date
+        else "https://hn.algolia.com/api/v1/search"
+    )
+    params = {
+        "query": query,
+        "tags": tags,
+        "hitsPerPage": min(num_results, 50),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(base, params=params)
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        log.warning("hn search failed: %s -> %s", query, e)
+        return {"status": "error", "query": query, "error": f"{type(e).__name__}: {e}"}
+
+    results = []
+    for hit in (data.get("hits") or [])[:num_results]:
+        oid = hit.get("objectID", "")
+        results.append({
+            "title": _compact(hit.get("title") or hit.get("story_title") or ""),
+            "url": hit.get("url") or f"https://news.ycombinator.com/item?id={oid}",
+            "hn_url": f"https://news.ycombinator.com/item?id={oid}",
+            "author": hit.get("author", ""),
+            "points": hit.get("points") or 0,
+            "num_comments": hit.get("num_comments") or 0,
+            "created": hit.get("created_at", ""),
+        })
+    return {
+        "status": "ok",
+        "query": query,
+        "num_results": len(results),
+        "results": results,
+    }
+
+
+async def reddit_search(
+    query: str,
+    num_results: int = 10,
+    subreddit: str = "",
+    sort: str = "relevance",
+    time: str = "all",
+) -> dict:
+    """Search Reddit via the public JSON endpoint.
+
+    Reddit rate-limits unauthenticated requests; on 429/403 the caller should
+    back off or scope the query to a specific subreddit.
+    """
+    if subreddit:
+        url = f"https://www.reddit.com/r/{subreddit}/search.json"
+        restrict = "1"
+    else:
+        url = "https://www.reddit.com/search.json"
+        restrict = "0"
+    params = {
+        "q": query,
+        "limit": min(num_results, 25),
+        "sort": sort,
+        "t": time,
+        "restrict_sr": restrict,
+    }
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+            r = await client.get(url, params=params)
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        log.warning("reddit search failed: %s -> %s", query, e)
+        return {"status": "error", "query": query, "error": f"{type(e).__name__}: {e}"}
+
+    results = []
+    for item in (data.get("data", {}).get("children") or [])[:num_results]:
+        d = item.get("data", {})
+        permalink = f"https://www.reddit.com{d.get('permalink', '')}"
+        selftext = (d.get("selftext") or "")[:500]
+        results.append({
+            "title": _compact(d.get("title", "")),
+            "selftext_preview": _compact(selftext),
+            "url": d.get("url", "") or permalink,
+            "permalink": permalink,
+            "subreddit": d.get("subreddit", ""),
+            "author": d.get("author", ""),
+            "score": d.get("score") or 0,
+            "num_comments": d.get("num_comments") or 0,
+            "created": d.get("created_utc", 0),
+        })
+    return {
+        "status": "ok",
+        "query": query,
+        "num_results": len(results),
+        "results": results,
+    }

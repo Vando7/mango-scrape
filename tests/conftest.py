@@ -11,10 +11,6 @@ import pytest
 # Server URL — defaults to localhost:9161 (Docker container)
 SERVER_URL = os.environ.get("SCRAPER_SERVER_URL", "http://localhost:9161")
 
-
-
-
-
 @pytest.fixture
 async def http_client():
     """Provide a shared httpx.AsyncClient."""

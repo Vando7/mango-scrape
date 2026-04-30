@@ -32,10 +32,8 @@ def _reset_db() -> None:
 
 def _get_cache_path() -> str:
     """Return the path to the SQLite cache file."""
-    return os.environ.get(
-        "DEEP_DIVE_CACHE_DB",
-        "/cache/yt_transcripts.db",
-    )
+    default = str(Path(__file__).resolve().parent / "cache" / "yt_transcripts.db")
+    return os.environ.get("DEEP_DIVE_CACHE_DB", default)
 
 
 def _db() -> sqlite3.Connection:
@@ -44,7 +42,7 @@ def _db() -> sqlite3.Connection:
     if _CACHE_CONN is None:
         db_path = Path(_get_cache_path())
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        _CACHE_CONN = sqlite3.connect(str(db_path))
+        _CACHE_CONN = sqlite3.connect(str(db_path), check_same_thread=False)
         _CACHE_CONN.execute("""
             CREATE TABLE IF NOT EXISTS yt_transcripts (
                 video_id TEXT,
@@ -77,10 +75,11 @@ def cache_get(video_id: str, language: str) -> str | None:
 
 def cache_put(video_id: str, language: str, raw_text: str) -> bool:
     """Store transcript in cache. Returns True on success."""
+    vid, lang = _cache_key(video_id, language)
     try:
         _db().execute(
             "INSERT OR REPLACE INTO yt_transcripts (video_id, language, raw_text) VALUES (?, ?, ?)",
-            (_cache_key(video_id, language)[0], _cache_key(video_id, language)[1], raw_text),
+            (vid, lang, raw_text),
         )
         _db().commit()
         return True
@@ -149,10 +148,11 @@ def get_transcript(video_id: str, language: str = "en") -> dict:
             "language": langs[0],
         }
 
-    # Fetch from API — try requested langs, then fallbacks
+    # Fetch from API — try requested langs, then fallbacks (skip dups)
     raw = None
     used_lang = None
-    for candidate in langs + _FALLBACK_LANGS:
+    candidates = langs + [l for l in _FALLBACK_LANGS if l not in langs]
+    for candidate in candidates:
         log.info("trying transcript lang=%s", candidate)
         raw = _fetch_raw(video_id, [candidate])
         if raw is not None:

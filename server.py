@@ -24,8 +24,10 @@ from scraper import (
     cat_file,
     clone_repo,
     download_file,
+    hn_search,
     launch_browser,
     list_files,
+    reddit_search,
     scrape_many,
     scrape_youtube,
     screenshot_many,
@@ -251,3 +253,34 @@ async def search(req: SearchRequest) -> dict:
             log.warning("brave search failed: %s", e)
 
     return {"status": "error", "query": req.query, "error": "brave search unavailable"}
+
+
+class HnSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=400)
+    num_results: int = Field(default=10, ge=1, le=50)
+    tags: str = "story"
+    sort_by_date: bool = False
+
+
+@app.post("/hn_search")
+async def hn_search_endpoint(req: HnSearchRequest) -> dict:
+    log.info("hn_search %s (num=%d, tags=%s)", req.query, req.num_results, req.tags)
+    return await hn_search(req.query, req.num_results, req.tags, req.sort_by_date)
+
+
+class RedditSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=400)
+    num_results: int = Field(default=10, ge=1, le=25)
+    subreddit: str = ""
+    sort: str = "relevance"
+    time: str = "all"
+
+
+@app.post("/reddit_search")
+async def reddit_search_endpoint(req: RedditSearchRequest) -> dict:
+    log.info(
+        "reddit_search %s (num=%d, sub=%s)", req.query, req.num_results, req.subreddit
+    )
+    return await reddit_search(
+        req.query, req.num_results, req.subreddit, req.sort, req.time
+    )
