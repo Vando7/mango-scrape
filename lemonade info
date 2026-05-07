@@ -1,0 +1,45 @@
+I start lemonade with lemond, then in another window I do.
+
+lemonade run user.Qwen3.6-35B-A3B-GGUF-UD-Q2_K_XL --ctx-size 100000 --llamacpp-args "--temp 0.6 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 0.0 --repeat-penalty 1.0"
+~/repos/vibing/mango-scrape master
+
+
+here's lemonade run's doc
+❯ lemonade run --help
+Load a model and open the webapp in browser
+
+
+lemonade run [OPTIONS] [model]
+
+
+POSITIONALS:
+  model MODEL                 Model name to run
+
+OPTIONS:
+  -h,     --help              Display help information
+          --help-all          Display help information for all subcommands
+          --ctx-size SIZE [4096]  (Env:LEMONADE_CTX_SIZE)
+                              Context size for the model
+          --flm-args ARGS [""]  (Env:LEMONADE_FLM_ARGS)
+                              Custom arguments to pass to flm serve
+          --llamacpp BACKEND [""]  (Env:LEMONADE_LLAMACPP)
+                              LlamaCpp backend to use
+          --llamacpp-args ARGS [""]  (Env:LEMONADE_LLAMACPP_ARGS)
+                              Custom arguments to pass to llama-server
+          --sdcpp BACKEND [""]  (Env:LEMONADE_SDCPP)
+                              SD.cpp backend to use
+          --sdcpp-args ARGS [""]  (Env:LEMONADE_SDCPP_ARGS)
+                              Custom arguments to pass to sd-server (must not conflict with
+                              managed args)
+          --whispercpp BACKEND [""]  (Env:LEMONADE_WHISPERCPP)
+                              WhisperCpp backend to use
+          --whispercpp-args ARGS [""]  (Env:LEMONADE_WHISPERCPP_ARGS)
+                              Custom arguments to pass to whisper-server
+          --save-options      Save model options for future runs
+  -v,     --version           Display program version information and exit
+          --host HOST [127.0.0.1]  (Env:LEMONADE_HOST)
+                              Server host
+          --port PORT [13305]  (Env:LEMONADE_PORT)
+                              Server port
+          --api-key KEY (Env:LEMONADE_API_KEY)
+                              API key for authentication
