@@ -1,5 +1,5 @@
 """Thin stdio MCP shim that forwards deep_dive calls to the scraper HTTP service.
-nah
+
 LM Studio (on Windows) spawns this via stdio. If the scraper server isn't already
 running, the shim auto-starts it locally on port 8765. If the server has idle-shut
 between tool calls, the next call respawns it transparently.
@@ -416,6 +416,60 @@ async def hn_search(
     except ServiceError as e:
         return _fmt({"status": "error", "query": query, "error": str(e)})
     return _fmt_list(data)
+
+
+def _fmt_system_info(data: dict) -> str:
+    """Format nested system_info dict as flat indented key=value text."""
+    if data.get("status") != "ok":
+        return _fmt(data)
+    lines: list[str] = []
+
+    def emit(prefix: str, val):
+        if isinstance(val, dict):
+            for k, v in val.items():
+                emit(f"{prefix}.{k}" if prefix else k, v)
+        elif isinstance(val, list):
+            for i, item in enumerate(val):
+                if isinstance(item, dict):
+                    lines.append(f"{prefix}[{i}]:")
+                    for k, v in item.items():
+                        lines.append(f"  {k}={v}")
+                else:
+                    lines.append(f"{prefix}[{i}]={item}")
+        else:
+            lines.append(f"{prefix}={val}")
+
+    for section in ("os", "cpu", "mem", "disk", "gpu", "processes", "net"):
+        if section not in data:
+            continue
+        lines.append(f"=== {section} ===")
+        emit("", data[section])
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def system_info() -> str:
+    """Return desktop system specs and current state for debugging.
+
+    Use when the user asks about something weird happening on their PC —
+    slowness, GPU issues, disk full, network problems, what's hogging
+    resources. One-shot read-only snapshot. Caller is on Windows desktop.
+
+    Sections:
+        os       — platform, version, uptime
+        cpu      — model, cores, current load %
+        mem      — total/used/free GB, swap
+        disk     — per-drive total/used/free GB
+        gpu      — name, VRAM total/used (nvidia-smi if present), GPU procs
+        processes — total count, top 10 by CPU, top 10 by memory
+        net      — default gateway + reachability, DNS check, public IP
+
+    No arguments. ~5-8KB of flat text output.
+    """
+    try:
+        return _fmt_system_info(await _post("/system_info", {}, timeout=15))
+    except ServiceError as e:
+        return _fmt({"status": "error", "error": str(e)})
 
 
 @mcp.tool()
