@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "deep-dive": {
+      "command": "/home/pg-test/.local/bin/uv",
+      "args": [
+        "run",
+        "--project",
+        "/home/pg-test/repos/mango-scrape/shim",
+        "python",
+        "/home/pg-test/repos/mango-scrape/shim/mcp_shim.py"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "DEEP_DIVE_URL": "http://localhost:8765"
+      }
+    }
+  }
+}
