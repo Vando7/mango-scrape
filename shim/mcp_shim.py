@@ -37,7 +37,10 @@ SCRAPER_PORT = _parsed_url.port or 8765
 SCRAPER_HOST = _parsed_url.hostname or "localhost"
 SERVER_SCRIPT = str(Path(__file__).resolve().parent.parent / "server.py")
 VENV_PYTHON = str(
-    Path(__file__).resolve().parent.parent / ".venv" / "Scripts" / "python.exe"
+    Path(__file__).resolve().parent.parent
+    / ".venv"
+    / ("Scripts" if os.name == "nt" else "bin")
+    / ("python.exe" if os.name == "nt" else "python")
 )
 
 mcp = FastMCP("deep-dive")

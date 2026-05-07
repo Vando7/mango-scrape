@@ -1,13 +1,13 @@
 {
   "mcpServers": {
     "deep-dive": {
-      "command": "/home/pg-test/.local/bin/uv",
+      "command": "/home/vanko/.local/bin/uv",
       "args": [
         "run",
         "--project",
-        "/home/pg-test/repos/mango-scrape/shim",
+        "/home/vanko/repos/vibing/mango-scrape/shim",
         "python",
-        "/home/pg-test/repos/mango-scrape/shim/mcp_shim.py"
+        "/home/vanko/repos/vibing/mango-scrape/shim/mcp_shim.py"
       ],
       "env": {
         "PYTHONUNBUFFERED": "1",
