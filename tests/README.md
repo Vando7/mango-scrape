@@ -1,10 +1,10 @@
-# API Tests — run against the live Docker container
+# API Tests — run against a live scraper server
 
 ## Quick start
 
 ```bash
 # Make sure the scraper is running:
-cd .. && docker compose up -d
+cd .. && uv run uvicorn server:app --port 8765
 
 # Run all tests:
 ./tests/run_tests.sh
@@ -27,7 +27,7 @@ cd .. && docker compose up -d
 
 ## Environment variables
 
-- `SCRAPER_SERVER_URL` — API base URL (default: `http://localhost:9161`)
+- `SCRAPER_SERVER_URL` — API base URL (default: `http://localhost:8765`)
 
 ## Dependencies
 

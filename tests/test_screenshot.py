@@ -1,4 +1,4 @@
-"""Screenshot tests against running Docker container."""
+"""Screenshot tests against a running scraper server."""
 
 import base64
 

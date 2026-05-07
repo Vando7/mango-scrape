@@ -1,4 +1,4 @@
-"""Unit tests for transcript cache, pagination, and compact — no Docker needed."""
+"""Unit tests for transcript cache, pagination, and compact — no server needed."""
 
 import os
 import tempfile

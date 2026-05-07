@@ -1,4 +1,4 @@
-"""Workspace file operation tests against running Docker container."""
+"""Workspace file operation tests against a running scraper server."""
 
 import pytest
 

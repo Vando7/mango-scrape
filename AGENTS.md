@@ -17,14 +17,14 @@ mcp_shim.py (thin, self-bootstraps) ──HTTP──▶ localhost:8765
                                             scraper.py (patchright + trafilatura)
 ```
 
-The shim auto-starts the FastAPI server on port 8765 if it isn't already running. No Docker needed — all deps live in `.venv`. The shim is intentionally thin: stdio MCP in, HTTP POST out.
+The shim auto-starts the FastAPI server on port 8765 if it isn't already running. All deps live in `.venv`. The shim is intentionally thin: stdio MCP in, HTTP POST out.
 
 ## Files
 
 | Path | Role |
 |---|---|
 | `scraper.py` | Scraping logic. `_compact`, `launch_browser`, `_scroll_page`, `_extract_links`, `_extract_reddit_comments`, `scrape_one`, `scrape_many`, `screenshot_one/many`, `download_file`, `clone_repo`, `list_files`, `cat_file`, `hn_search`, `reddit_search`. YouTube: delegates transcript to `yt_transcript`. Reddit URL scraping: scroll + network idle wait + include_comments=True + old.reddit→www→m.reddit fallback chain. |
-| `server.py` | FastAPI wrapper. Lifespan owns a shared browser. Endpoints: `POST /scrape`, `/screenshot`, `/scrape_youtube`, `/transcript_page`, `/download`, `/clone`, `/list`, `/cat`, `/search`, `/hn_search`, `/reddit_search`, plus `GET /health`. Brave search via `BRAVE_API_KEY`. Idle shutdown after `DEEP_DIVE_IDLE_TIMEOUT` seconds (default 300). Writes `server.pid` on startup. Listens on `8765`; under docker-compose mapped to `9161` on the host. |
+| `server.py` | FastAPI wrapper. Lifespan owns a shared browser. Endpoints: `POST /scrape`, `/screenshot`, `/scrape_youtube`, `/transcript_page`, `/download`, `/clone`, `/list`, `/cat`, `/search`, `/hn_search`, `/reddit_search`, plus `GET /health`. Brave search via `BRAVE_API_KEY`. Idle shutdown after `DEEP_DIVE_IDLE_TIMEOUT` seconds (default 300). Writes `server.pid` on startup. Listens on `8765`. |
 | `yt_transcript.py` | YouTube transcript fetching with SQLite cache and word-based pagination (500-word pages). Functions: `get_transcript`, `paginate_transcript`, `get_page`, `cache_get`, `cache_put`. Cache path defaults to `./cache/yt_transcripts.db` next to the file (overridable via `DEEP_DIVE_CACHE_DB`). |
 | `shim/mcp_shim.py` | stdio MCP server. `_fmt` formats a single dict as flat key=value lines; `_fmt_list` formats `{status, query, num_results, results}` shapes with `===` between blocks. Multi-line values keep real newlines — no escape artifacts. `_post()` does the HTTP call with one auto-restart-and-retry on `ConnectError` (raises `ServiceError` on persistent failure). `_ensure_server()` only auto-starts when the target host is local. |
 | `shim/pyproject.toml` | Shim deps: `mcp`, `httpx`. |

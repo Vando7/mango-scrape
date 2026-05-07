@@ -1,4 +1,4 @@
-"""YouTube scraping tests against running Docker container."""
+"""YouTube scraping tests against a running scraper server."""
 
 
 # Test URLs — real YouTube videos with transcripts available

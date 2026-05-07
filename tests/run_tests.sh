@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run tests against the running Docker container.
+# Run tests against a running scraper server.
 # Usage: ./tests/run_tests.sh [filter]
 #   e.g.: ./tests/run_tests.sh test_scrape  # run only scrape tests
 

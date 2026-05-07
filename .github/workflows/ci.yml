@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install deps (pure Python tests, no Docker needed)
+      - name: Install deps (pure Python tests)
         run: |
           pip install pytest pytest-asyncio youtube-transcript-api pydantic fastapi uvicorn patchright trafilatura httpx
 
@@ -29,5 +29,5 @@ jobs:
             tests/test_transcript_unit.py \
             -v --tb=short
 
-      # Note: integration tests (scrape, screenshot, YouTube scraping) need Docker + Chromium.
+      # Note: integration tests (scrape, screenshot, YouTube scraping) need a running scraper + Chromium.
       # Run locally with: uv run pytest tests/ -v

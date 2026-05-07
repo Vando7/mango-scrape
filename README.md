@@ -9,8 +9,6 @@ Two pieces:
 LM Studio ──stdio──▶ mcp_shim.py ──HTTP──▶ localhost:8765 ──▶ FastAPI ──▶ patchright ──▶ trafilatura
 ```
 
-Docker is also supported (see [Dockerfile](Dockerfile), [docker-compose.yml](docker-compose.yml)) but the auto-start path is lighter on system resources and is the primary mode. Under docker-compose the container listens on `8765` internally and is mapped to `9161` on the host. Override the shim's target with `DEEP_DIVE_URL` (e.g. `http://localhost:9161`) — non-local hosts disable the auto-start fallback.
-
 ## Run the scraper
 
 The shim does this for you on first tool call. To run manually:
@@ -23,15 +21,6 @@ uv run uvicorn server:app --port 8765
 # Sanity checks
 curl -s http://localhost:8765/health
 curl -s -X POST http://localhost:8765/scrape -H 'Content-Type: application/json' -d '{"urls":["https://example.com"]}' | jq .
-```
-
-Or run via Docker:
-
-```bash
-docker compose up -d --build
-curl -s http://localhost:9161/health
-# Logs: docker compose logs -f scraper
-# Stop: docker compose down
 ```
 
 The server exits after `DEEP_DIVE_IDLE_TIMEOUT` seconds (default 300) of no requests. Set to `0` to disable.
@@ -78,7 +67,7 @@ Or with plain Python:
 }
 ```
 
-Save — LM Studio auto-reloads. Shim stderr shows in the Program tab; scraper tracebacks show in `docker compose logs`.
+Save — LM Studio auto-reloads. Shim stderr shows in the Program tab; to see scraper tracebacks, run uvicorn manually (see [Run the scraper](#run-the-scraper)) instead of relying on the auto-started subprocess.
 
 ## Available tools
 
@@ -104,7 +93,7 @@ Reddit URLs are handled automatically with a fallback chain: www.reddit.com → 
 - **m.reddit.com**: simpler HTML, fewer comments but more reliable
 - **old.reddit.com**: cleanest HTML structure but often blocked by bot detection
 
-Override the service URL (default `http://localhost:9161`) with `"DEEP_DIVE_URL"` in `env`.
+Override the service URL (default `http://localhost:8765`) with `"DEEP_DIVE_URL"` in `env`.
 
 ## Output format
 

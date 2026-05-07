@@ -1,6 +1,6 @@
 """FastAPI service wrapping the scraper over HTTP.
 
-Runs inside the Docker container. The MCP shim on Windows talks to it.
+Auto-started by the MCP shim on first tool call; the shim talks to it over HTTP.
 """
 
 from __future__ import annotations

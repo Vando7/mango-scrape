@@ -1,4 +1,4 @@
-"""Shared test fixtures for HTTP API tests against the running Docker container."""
+"""Shared test fixtures for HTTP API tests against a running scraper server."""
 
 from __future__ import annotations
 
@@ -8,8 +8,7 @@ import httpx
 import pytest
 
 
-# Server URL — defaults to localhost:9161 (Docker container)
-SERVER_URL = os.environ.get("SCRAPER_SERVER_URL", "http://localhost:9161")
+SERVER_URL = os.environ.get("SCRAPER_SERVER_URL", "http://localhost:8765")
 
 @pytest.fixture
 async def http_client():

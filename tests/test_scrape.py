@@ -1,4 +1,4 @@
-"""Scraping tests against running Docker container."""
+"""Scraping tests against a running scraper server."""
 
 from __future__ import annotations
 
