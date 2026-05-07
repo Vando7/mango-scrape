@@ -32,6 +32,7 @@ from scraper import (
     scrape_youtube,
     screenshot_many,
 )
+from system_info import collect_system_info
 from yt_transcript import get_page
 
 # Idle shutdown: shut down after 5 minutes with no requests (overridable via env var)
@@ -284,3 +285,9 @@ async def reddit_search_endpoint(req: RedditSearchRequest) -> dict:
     return await reddit_search(
         req.query, req.num_results, req.subreddit, req.sort, req.time
     )
+
+
+@app.post("/system_info")
+async def system_info_endpoint() -> dict:
+    log.info("system_info")
+    return await collect_system_info()

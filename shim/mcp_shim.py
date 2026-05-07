@@ -1,5 +1,5 @@
 """Thin stdio MCP shim that forwards deep_dive calls to the scraper HTTP service.
-
+nah
 LM Studio (on Windows) spawns this via stdio. If the scraper server isn't already
 running, the shim auto-starts it locally on port 8765. If the server has idle-shut
 between tool calls, the next call respawns it transparently.
