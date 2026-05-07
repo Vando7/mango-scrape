@@ -1,5 +1,5 @@
 """Thin stdio MCP shim that forwards deep_dive calls to the scraper HTTP service.
-
+nah
 LM Studio (on Windows) spawns this via stdio. If the scraper server isn't already
 running, the shim auto-starts it locally on port 8765. If the server has idle-shut
 between tool calls, the next call respawns it transparently.
@@ -36,7 +36,9 @@ _parsed_url = urlparse(SERVICE_URL)
 SCRAPER_PORT = _parsed_url.port or 8765
 SCRAPER_HOST = _parsed_url.hostname or "localhost"
 SERVER_SCRIPT = str(Path(__file__).resolve().parent.parent / "server.py")
-VENV_PYTHON = str(Path(__file__).resolve().parent.parent / ".venv" / "Scripts" / "python.exe")
+VENV_PYTHON = str(
+    Path(__file__).resolve().parent.parent / ".venv" / "Scripts" / "python.exe"
+)
 
 mcp = FastMCP("deep-dive")
 
@@ -57,7 +59,11 @@ def _fmt_list(data: dict) -> str:
     """
     if data.get("status") != "ok":
         return _fmt(data)
-    parts = [f"status={data['status']}", f"query={data['query']}", f"num_results={data['num_results']}"]
+    parts = [
+        f"status={data['status']}",
+        f"query={data['query']}",
+        f"num_results={data['num_results']}",
+    ]
     for r in data.get("results", []):
         parts.append("===")
         for k, v in r.items():
@@ -132,7 +138,9 @@ async def deep_dive(urls: list[str], timeout_s: int = 30) -> str:
 
 
 @mcp.tool()
-async def deep_dive_screenshot(urls: list[str], timeout_s: int = 30) -> list[ImageContent | TextContent]:
+async def deep_dive_screenshot(
+    urls: list[str], timeout_s: int = 30
+) -> list[ImageContent | TextContent]:
     """Capture full-page screenshots of one or more URLs.
 
     Use when text scraping isn't enough — visual layout, charts, dashboards,
@@ -166,7 +174,9 @@ async def deep_dive_screenshot(urls: list[str], timeout_s: int = 30) -> list[Ima
     for item in results:
         if item.get("status") == "ok" and item.get("screenshot_b64"):
             out.append(
-                ImageContent(type="image", data=item["screenshot_b64"], mimeType="image/png")
+                ImageContent(
+                    type="image", data=item["screenshot_b64"], mimeType="image/png"
+                )
             )
         else:
             out.append(
@@ -179,7 +189,9 @@ async def deep_dive_screenshot(urls: list[str], timeout_s: int = 30) -> list[Ima
 
 
 @mcp.tool()
-async def get_youtube_transcript(urls: list[str], timeout_s: int = 30, language: str = "en") -> str:
+async def get_youtube_transcript(
+    urls: list[str], timeout_s: int = 30, language: str = "en"
+) -> str:
     """Fetch YouTube transcripts + video metadata for one or more URLs.
 
     Use this for any youtube.com/watch or youtu.be URL — calling deep_dive on
@@ -335,10 +347,13 @@ async def web_search(
         except ServiceError as e:
             scrapes = [{"url": u, "status": "error", "error": str(e)} for u in urls]
         by_url = {s["url"]: s for s in scrapes}
+        # Fields to skip: url (identity), links (too many), markdown_content
+        # (the snippet already gives the model enough to decide what to read)
+        _skip = {"url", "links", "markdown_content"}
         for r in data["results"]:
             sc = by_url.get(r["url"], {})
             for k, v in sc.items():
-                if k == "url":
+                if k in _skip:
                     continue
                 if k == "title" and not v:
                     continue  # keep search title if scrape didn't extract one
@@ -370,13 +385,22 @@ async def deep_dive_transcript_page(
     total_pages, page_num, page_size, transcript.
     """
     try:
-        return _fmt(await _post(
-            "/transcript_page",
-            {"video_id": video_id, "page_num": page_num, "language": language},
-            timeout=60,
-        ))
+        return _fmt(
+            await _post(
+                "/transcript_page",
+                {"video_id": video_id, "page_num": page_num, "language": language},
+                timeout=60,
+            )
+        )
     except ServiceError as e:
-        return _fmt({"status": "error", "video_id": video_id, "page_num": page_num, "error": str(e)})
+        return _fmt(
+            {
+                "status": "error",
+                "video_id": video_id,
+                "page_num": page_num,
+                "error": str(e),
+            }
+        )
 
 
 @mcp.tool()
@@ -416,60 +440,6 @@ async def hn_search(
     except ServiceError as e:
         return _fmt({"status": "error", "query": query, "error": str(e)})
     return _fmt_list(data)
-
-
-def _fmt_system_info(data: dict) -> str:
-    """Format nested system_info dict as flat indented key=value text."""
-    if data.get("status") != "ok":
-        return _fmt(data)
-    lines: list[str] = []
-
-    def emit(prefix: str, val):
-        if isinstance(val, dict):
-            for k, v in val.items():
-                emit(f"{prefix}.{k}" if prefix else k, v)
-        elif isinstance(val, list):
-            for i, item in enumerate(val):
-                if isinstance(item, dict):
-                    lines.append(f"{prefix}[{i}]:")
-                    for k, v in item.items():
-                        lines.append(f"  {k}={v}")
-                else:
-                    lines.append(f"{prefix}[{i}]={item}")
-        else:
-            lines.append(f"{prefix}={val}")
-
-    for section in ("os", "cpu", "mem", "disk", "gpu", "processes", "net"):
-        if section not in data:
-            continue
-        lines.append(f"=== {section} ===")
-        emit("", data[section])
-    return "\n".join(lines)
-
-
-@mcp.tool()
-async def system_info() -> str:
-    """Return desktop system specs and current state for debugging.
-
-    Use when the user asks about something weird happening on their PC —
-    slowness, GPU issues, disk full, network problems, what's hogging
-    resources. One-shot read-only snapshot. Caller is on Windows desktop.
-
-    Sections:
-        os       — platform, version, uptime
-        cpu      — model, cores, current load %
-        mem      — total/used/free GB, swap
-        disk     — per-drive total/used/free GB
-        gpu      — name, VRAM total/used (nvidia-smi if present), GPU procs
-        processes — total count, top 10 by CPU, top 10 by memory
-        net      — default gateway + reachability, DNS check, public IP
-
-    No arguments. ~5-8KB of flat text output.
-    """
-    try:
-        return _fmt_system_info(await _post("/system_info", {}, timeout=15))
-    except ServiceError as e:
-        return _fmt({"status": "error", "error": str(e)})
 
 
 @mcp.tool()
@@ -534,10 +504,15 @@ async def _ensure_server():
         return
 
     if SCRAPER_HOST not in ("localhost", "127.0.0.1"):
-        log.warning("DEEP_DIVE_URL points to non-local host %s — not auto-starting", SCRAPER_HOST)
+        log.warning(
+            "DEEP_DIVE_URL points to non-local host %s — not auto-starting",
+            SCRAPER_HOST,
+        )
         return
 
-    log.warning("scraper server not running — starting locally on port %d", SCRAPER_PORT)
+    log.warning(
+        "scraper server not running — starting locally on port %d", SCRAPER_PORT
+    )
 
     # Find python: prefer .venv, fall back to system python
     py = VENV_PYTHON if os.path.exists(VENV_PYTHON) else "python"
