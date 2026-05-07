@@ -37,7 +37,9 @@ async def launch_browser() -> tuple[Browser, Any]:
     return browser, pw
 
 
-async def _scroll_page(page, scroll_count: int = 10, delay_ms: int = 500, scroll_px: int = 1500):
+async def _scroll_page(
+    page, scroll_count: int = 10, delay_ms: int = 500, scroll_px: int = 1500
+):
     """Scroll down the page multiple times to trigger lazy-loaded content."""
     for i in range(scroll_count):
         try:
@@ -47,30 +49,87 @@ async def _scroll_page(page, scroll_count: int = 10, delay_ms: int = 500, scroll
             break
 
 
+MAX_LINKS = 10
+
+
 async def _extract_links(page) -> list[dict]:
-    """Extract all meaningful links from the page. General-purpose, no site-specific logic."""
+    """Extract meaningful links from the page, capped at MAX_LINKS.
+
+    Prioritises links with longer, more descriptive anchor text so the model
+    can understand what each link points to without needing to scrape it.
+    """
     try:
         links = await page.evaluate("""
             (() => {
                 const results = [];
+                const seen = new Set();
                 document.querySelectorAll('a[href]').forEach(a => {
                     const text = (a.innerText || '').trim();
                     const url = a.href;
                     if (!text || !url || !url.startsWith('http')) return;
+                    const key = url.split('#')[0];
+                    if (seen.has(key)) return;
+                    seen.add(key);
                     results.push({ text: text.substring(0, 200), url: url });
                 });
                 return results;
             })()
         """)
-        # Filter: skip short URLs and navigation keywords
-        nav_words = {'back', 'next', 'prev', 'first', 'last', 'read more', 'continue', 'see more', 'more', 'click here', 'learn more', 'new', 'past', 'ask', 'show', 'jobs', 'submit', 'login', 'logout', 'about', 'contact', 'help', 'search', 'menu', 'toggle', 'settings', 'hide', 'discuss', 'comments', 'profile'}
+        # Filter: skip short URLs, navigation keywords, and single-word links
+        nav_words = {
+            "back",
+            "next",
+            "prev",
+            "first",
+            "last",
+            "read more",
+            "continue",
+            "see more",
+            "more",
+            "click here",
+            "learn more",
+            "new",
+            "past",
+            "ask",
+            "show",
+            "jobs",
+            "submit",
+            "login",
+            "logout",
+            "about",
+            "contact",
+            "help",
+            "search",
+            "menu",
+            "toggle",
+            "settings",
+            "hide",
+            "discuss",
+            "comments",
+            "profile",
+            "share",
+            "save",
+            "report",
+            "reply",
+            "permalink",
+            "embed",
+            "source",
+            "home",
+            "top",
+            "best",
+        }
         out = []
-        for item in (links or []):
-            t = item['text'].lower()
-            if len(item['url']) < 20: continue
-            if t in nav_words: continue
+        for item in links or []:
+            t = item["text"].lower().strip()
+            url = item["url"]
+            if len(url) < 20:
+                continue
+            if t in nav_words or len(t.split()) < 2:
+                continue  # skip single-word and nav links
             out.append(item)
-        return out
+        # Sort by anchor text length (desc) so the most descriptive links win
+        out.sort(key=lambda x: len(x["text"]), reverse=True)
+        return out[:MAX_LINKS]
     except Exception as e:
         log.warning("link extraction failed: %s", e)
         return []
@@ -82,27 +141,50 @@ async def _extract_reddit_comments(page) -> str:
         comments = await page.evaluate("""
             (() => {
                 const results = [];
-                const selectors = [
-                    '.usertext',
+                // Extract post body from .md-block or .usertext
+                const postSelectors = [
+                    '.md-block',
+                    '.usertext-body',
+                    '[class*="md-block"]',
+                    '[class*="body__"]',
+                ];
+                for (const sel of postSelectors) {
+                    const el = document.querySelector(sel);
+                    if (el && el.innerText && el.innerText.trim().length > 30) {
+                        results.push('--- POST ---\n' + el.innerText.trim());
+                        break;
+                    }
+                }
+                // Extract comments from Reddit's comment UI
+                const commentSelectors = [
                     '[data-testid="comment-ui"]',
                     '[class*="CommentBlock"]',
-                    '[class*="body__"]',
-                    '[class*="md "]',
+                    '[class*="comment"]',
+                    '[class*="Comment"]',
+                    '[class*="ElasticBlock"]',
                 ];
-
-                selectors.forEach(sel => {
+                for (const sel of commentSelectors) {
                     document.querySelectorAll(sel).forEach(el => {
                         const text = el.innerText?.trim();
-                        if (text && text.length > 10) {
+                        if (text && text.length > 15) {
+                            // Skip UI chrome like "Reply", "Share", "Sort",
+                            // "Add comment", "Post", "New", etc.
+                            const lower = text.toLowerCase();
+                            if (lower.includes('add comment') || lower.includes('sort by') ||
+                                lower.includes('reply') || lower.includes('share') ||
+                                lower.includes('post') || lower.includes('new comment')) {
+                                return;
+                            }
                             let isDuplicate = false;
                             for (const r of results) {
                                 if (r.startsWith(text.substring(0, 30))) { isDuplicate = true; break; }
                             }
-                            if (!isDuplicate) results.push(text);
+                            if (!isDuplicate) {
+                                results.push(text);
+                            }
                         }
                     });
-                });
-
+                }
                 return results.join('\n\n---\n\n');
             })()
         """)
@@ -116,8 +198,8 @@ def _compact(text: str) -> str:
     """Collapse whitespace/newlines so JSON-escaping doesn't eat tokens."""
     if not text:
         return text
-    text = re.sub(r'[ \t]+', ' ', text)
-    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return text
 
 
@@ -140,8 +222,6 @@ def _extract_video_id(url: str) -> str | None:
     if m and len(m.group(1)) == 11:
         return m.group(1)
     return None
-
-
 
 
 async def _scrape_youtube_comments(browser: Browser, url: str, timeout_s: int) -> dict:
@@ -241,7 +321,7 @@ async def _scrape_youtube_comments(browser: Browser, url: str, timeout_s: int) -
         # Deduplicate
         seen = set()
         unique_comments = []
-        for c in (comments or []):
+        for c in comments or []:
             if c not in seen and len(c) > 10:
                 seen.add(c)
                 unique_comments.append(c)
@@ -283,7 +363,9 @@ async def _scrape_youtube_comments(browser: Browser, url: str, timeout_s: int) -
                 pass
 
 
-async def scrape_youtube(browser: Browser, url: str, timeout_s: int, language: str = "en") -> dict:
+async def scrape_youtube(
+    browser: Browser, url: str, timeout_s: int, language: str = "en"
+) -> dict:
     """Scrape a YouTube video: transcript + comments.
 
     Args:
@@ -295,7 +377,11 @@ async def scrape_youtube(browser: Browser, url: str, timeout_s: int, language: s
     """
     video_id = _extract_video_id(url)
     if not video_id:
-        return {"status": "error", "url": url, "error": "Could not extract video ID from URL"}
+        return {
+            "status": "error",
+            "url": url,
+            "error": "Could not extract video ID from URL",
+        }
 
     # Fetch paginated transcript (cached, no browser needed)
     transcript_result = paginate_transcript(video_id, language)
@@ -310,16 +396,28 @@ async def scrape_youtube(browser: Browser, url: str, timeout_s: int, language: s
         cached = transcript_result.get("cached", False)
         meta_tag = " [cached]" if cached else ""
         page_info = f"\n---\nTranscript: {total_pages} page(s){meta_tag}. Page 1 of {total_pages}. Say 'next' for more pages."
-        first_page = transcript_result.get("pages", [""])[0] if transcript_result.get("pages") else ""
+        first_page = (
+            transcript_result.get("pages", [""])[0]
+            if transcript_result.get("pages")
+            else ""
+        )
         content_parts.append(f"# Transcript{page_info}\n\n{first_page}")
     else:
-        content_parts.append(f"# Transcript Error: {transcript_result.get('error', 'unknown')}")
+        content_parts.append(
+            f"# Transcript Error: {transcript_result.get('error', 'unknown')}"
+        )
 
     if comment_result.get("status") == "ok":
-        comments_text = "\n\n---\n\n".join(comment_result["comments"][:50])  # top 50 for content
-        content_parts.append(f"\n# Comments ({comment_result['comment_count']} total)\n\n{comments_text}")
+        comments_text = "\n\n---\n\n".join(
+            comment_result["comments"][:50]
+        )  # top 50 for content
+        content_parts.append(
+            f"\n# Comments ({comment_result['comment_count']} total)\n\n{comments_text}"
+        )
     else:
-        content_parts.append(f"\n# Comments Error: {comment_result.get('error', 'unknown')}")
+        content_parts.append(
+            f"\n# Comments Error: {comment_result.get('error', 'unknown')}"
+        )
 
     full_content = "\n\n".join(content_parts)
 
@@ -334,7 +432,9 @@ async def scrape_youtube(browser: Browser, url: str, timeout_s: int, language: s
         "markdown_content": _compact(full_content),
         "word_count": len(full_content.split()) if full_content else 0,
         "transcript_status": transcript_result.get("status", "error"),
-        "comment_count": comment_result.get("comment_count", 0) if comment_result.get("status") == "ok" else 0,
+        "comment_count": comment_result.get("comment_count", 0)
+        if comment_result.get("status") == "ok"
+        else 0,
     }
 
 
@@ -424,16 +524,21 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
 
     For Reddit URLs, tries old.reddit first (lighter, easier to parse), then www, then m.reddit.
     """
-    # Reddit-specific fallback chain: old.reddit first (cleanest HTML), then www, then m.reddit
+    # Reddit-specific fallback chain: www.reddit first (SSR post body),
+    # then old.reddit (cleaner HTML, no JS), then m.reddit.
     urls_to_try = [url]
-    if "reddit.com" in url and "old.reddit.com" not in url and "m.reddit.com" not in url:
+    if (
+        "reddit.com" in url
+        and "old.reddit.com" not in url
+        and "m.reddit.com" not in url
+    ):
         base = url.split("?")[0].rstrip("/")
         # Extract path after domain (e.g. /r/python)
         parts = base.split("/", 3)  # ["https:", "", "www.reddit.com", "/r/python"]
         path = f"/{parts[3]}" if len(parts) > 3 else ""
         urls_to_try = [
+            url,  # www.reddit first (SSR post body)
             f"https://old.reddit.com{path}",
-            url,
             f"https://m.reddit.com{path}",
         ]
 
@@ -453,11 +558,15 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
             if is_reddit:
                 await _inject_stealth(page)
 
-            await page.goto(attempt_url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
+            await page.goto(
+                attempt_url, wait_until="domcontentloaded", timeout=timeout_s * 1000
+            )
             # For Reddit, wait longer for JS-rendered content
             if "reddit.com" in attempt_url and "m.reddit" not in attempt_url:
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=timeout_s * 500)
+                    await page.wait_for_load_state(
+                        "networkidle", timeout=timeout_s * 500
+                    )
                 except Exception:
                     pass
             else:
@@ -482,6 +591,8 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
                                     '[class*="load-more"]',
                                     'button[class*="more"]',
                                     '[aria-label*="load more"]',
+                                    '[data-click-handler="load-more-comments"]',
+                                    '[class*="LoadMoreComments"]',
                                 ];
                                 let found = false;
                                 selectors.forEach(sel => {
@@ -509,12 +620,38 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
                         pass
                     await asyncio.sleep(0.5)
             html = await page.content()
+            # For Reddit, check if post body actually rendered (old.reddit often
+            # just has the shell with no post/comments)
+            if "reddit.com" in attempt_url and "m.reddit" not in attempt_url:
+                has_content = await page.evaluate("""
+                    (() => {
+                        const selectors = [
+                            '[class*="md-block"]',
+                            '[class*="usertext-body"]',
+                            '[class*="comment"]',
+                            '[data-testid="comment-ui"]',
+                        ];
+                        for (const sel of selectors) {
+                            if (document.querySelector(sel)) return true;
+                        }
+                        return false;
+                    })()
+                """)
+                if not has_content:
+                    log.warning(
+                        "reddit page %s has no post body — trying next URL",
+                        attempt_url,
+                    )
+                    continue
             if html and len(html) > 1000:
                 log.info("scrape succeeded via %s (%d bytes)", attempt_url, len(html))
                 # Extract Reddit comments while page is still open
                 if "reddit.com" in attempt_url:
                     reddit_comments_html = await _extract_reddit_comments(page)
-                    log.info("reddit comments extracted: %d chars", len(reddit_comments_html or ""))
+                    log.info(
+                        "reddit comments extracted: %d chars",
+                        len(reddit_comments_html or ""),
+                    )
                 # Extract links for general-purpose browsing
                 page_links = await _extract_links(page)
                 log.info("extracted %d links", len(page_links))
@@ -529,7 +666,11 @@ async def scrape_one(browser: Browser, url: str, timeout_s: int) -> dict:
                 pass
 
     if html is None or len(html) < 1000:
-        return {"url": url, "status": "error", "error": f"navigation failed: {last_error}"}
+        return {
+            "url": url,
+            "status": "error",
+            "error": f"navigation failed: {last_error}",
+        }
 
     try:
         raw_content = (
@@ -727,7 +868,9 @@ def clone_repo(git_url: str, workspace_dir: str) -> dict:
             timeout=120,
         )
         if result.returncode != 0:
-            err_msg = (result.stderr or result.stdout or f"exit {result.returncode}")[:500]
+            err_msg = (result.stderr or result.stdout or f"exit {result.returncode}")[
+                :500
+            ]
             return {"status": "error", "git_url": git_url, "error": err_msg}
 
         # Count files in the repo
@@ -739,10 +882,18 @@ def clone_repo(git_url: str, workspace_dir: str) -> dict:
             "file_count": file_count,
         }
     except subprocess.TimeoutExpired:
-        return {"status": "error", "git_url": git_url, "error": "Clone timed out (120s)"}
+        return {
+            "status": "error",
+            "git_url": git_url,
+            "error": "Clone timed out (120s)",
+        }
     except Exception as e:
         log.warning("clone failed: %s -> %s", git_url, e)
-        return {"status": "error", "git_url": git_url, "error": f"{type(e).__name__}: {e}"}
+        return {
+            "status": "error",
+            "git_url": git_url,
+            "error": f"{type(e).__name__}: {e}",
+        }
 
 
 def list_files(path: str, workspace_dir: str) -> dict:
@@ -766,7 +917,9 @@ def list_files(path: str, workspace_dir: str) -> dict:
         if item.is_dir():
             entries.append({"name": str(rel), "type": "dir", "size": 0})
         else:
-            entries.append({"name": str(rel), "type": "file", "size": item.stat().st_size})
+            entries.append(
+                {"name": str(rel), "type": "file", "size": item.stat().st_size}
+            )
 
     return {
         "status": "ok",
@@ -831,15 +984,17 @@ async def hn_search(
     results = []
     for hit in (data.get("hits") or [])[:num_results]:
         oid = hit.get("objectID", "")
-        results.append({
-            "title": _compact(hit.get("title") or hit.get("story_title") or ""),
-            "url": hit.get("url") or f"https://news.ycombinator.com/item?id={oid}",
-            "hn_url": f"https://news.ycombinator.com/item?id={oid}",
-            "author": hit.get("author", ""),
-            "points": hit.get("points") or 0,
-            "num_comments": hit.get("num_comments") or 0,
-            "created": hit.get("created_at", ""),
-        })
+        results.append(
+            {
+                "title": _compact(hit.get("title") or hit.get("story_title") or ""),
+                "url": hit.get("url") or f"https://news.ycombinator.com/item?id={oid}",
+                "hn_url": f"https://news.ycombinator.com/item?id={oid}",
+                "author": hit.get("author", ""),
+                "points": hit.get("points") or 0,
+                "num_comments": hit.get("num_comments") or 0,
+                "created": hit.get("created_at", ""),
+            }
+        )
     return {
         "status": "ok",
         "query": query,
@@ -894,17 +1049,19 @@ async def reddit_search(
         d = item.get("data", {})
         permalink = f"https://www.reddit.com{d.get('permalink', '')}"
         selftext = (d.get("selftext") or "")[:500]
-        results.append({
-            "title": _compact(d.get("title", "")),
-            "selftext_preview": _compact(selftext),
-            "url": d.get("url", "") or permalink,
-            "permalink": permalink,
-            "subreddit": d.get("subreddit", ""),
-            "author": d.get("author", ""),
-            "score": d.get("score") or 0,
-            "num_comments": d.get("num_comments") or 0,
-            "created": d.get("created_utc", 0),
-        })
+        results.append(
+            {
+                "title": _compact(d.get("title", "")),
+                "selftext_preview": _compact(selftext),
+                "url": d.get("url", "") or permalink,
+                "permalink": permalink,
+                "subreddit": d.get("subreddit", ""),
+                "author": d.get("author", ""),
+                "score": d.get("score") or 0,
+                "num_comments": d.get("num_comments") or 0,
+                "created": d.get("created_utc", 0),
+            }
+        )
     return {
         "status": "ok",
         "query": query,
