@@ -57,6 +57,10 @@ async def _idle_watcher(app: FastAPI):
                 await pw.stop()
             except Exception:
                 pass
+            try:
+                app.state.pid_file.unlink()
+            except FileNotFoundError:
+                pass
             os._exit(0)
 
 
@@ -74,6 +78,7 @@ async def lifespan(app: FastAPI):
     script_dir = Path(__file__).parent
     pid_file = script_dir / "server.pid"
     pid_file.write_text(str(os.getpid()))
+    app.state.pid_file = pid_file
     log.info("pid %d written to %s", os.getpid(), pid_file)
 
     # Start idle timeout watcher
@@ -89,7 +94,6 @@ async def lifespan(app: FastAPI):
             await app.state.browser.close()
         finally:
             await app.state.pw.stop()
-        # Clean up PID file only on normal shutdown (idle watcher kills with os._exit)
         try:
             pid_file.unlink()
         except FileNotFoundError:

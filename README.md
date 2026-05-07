@@ -1,4 +1,4 @@
-# deep-dive-mcp
+# mango-scrape
 
 Two pieces:
 
